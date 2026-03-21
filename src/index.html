@@ -6,262 +6,93 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     :root {
-  --bg-primary: #0f1117;
-  --bg-card: #1a1d27;
-  --bg-input: #2d3148;
-  --border: #2d3148;
-  --border-input: #3d4460;
-  --text-primary: #e2e8f0;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-}
-
-body.light {
-  --bg-primary: #f1f5f9;
-  --bg-card: #ffffff;
-  --bg-input: #e2e8f0;
-  --border: #e2e8f0;
-  --border-input: #cbd5e1;
-  --text-primary: #0f172a;
-  --text-secondary: #334155;
-  --text-muted: #64748b;
-}
+      --bg-primary: #0f1117; --bg-card: #1a1d27; --bg-input: #2d3148;
+      --border: #2d3148; --border-input: #3d4460;
+      --text-primary: #e2e8f0; --text-secondary: #94a3b8; --text-muted: #64748b;
+    }
+    body.light {
+      --bg-primary: #f1f5f9; --bg-card: #ffffff; --bg-input: #e2e8f0;
+      --border: #e2e8f0; --border-input: #cbd5e1;
+      --text-primary: #0f172a; --text-secondary: #334155; --text-muted: #64748b;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  width: 420px;
-  height: 900px;
-  overflow: hidden;
-  user-select: none;
-  transition: background 0.3s, color 0.3s;
-}
-.titlebar {
-  -webkit-app-region: drag;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-}
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg-primary); color: var(--text-primary);
+      width: 420px; overflow: hidden; user-select: none;
+      transition: background 0.3s, color 0.3s;
+    }
+    .titlebar {
+      -webkit-app-region: drag;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 16px; background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
     .titlebar-left { display: flex; align-items: center; gap: 8px; }
     .titlebar h1 { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
     .titlebar .right { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
     .uptime-badge {
-  font-size: 11px; color: var(--text-muted);
-  background: var(--bg-input);
-  padding: 2px 8px;
-  border-radius: 20px;
-  display: flex; align-items: center; gap: 4px;
-}
-    .close-btn {
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      background: #ff5f57;
-      border: none; cursor: pointer;
+      font-size: 11px; color: var(--text-muted); background: var(--bg-input);
+      padding: 2px 8px; border-radius: 20px; display: flex; align-items: center; gap: 4px;
     }
+    .icon-btn { background: none; border: none; cursor: pointer; padding: 0; display: flex; align-items: center; }
+    .close-btn { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; border: none; cursor: pointer; }
     .content { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px;
-}
-    .card-header {
-      display: flex; align-items: center; gap: 6px;
-      margin-bottom: 8px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px; transition: border 0.2s;
     }
-    .card-header svg { color: #64748b; }
+    .card-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 10px;
+}
+    .card-header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
     .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
     .value { font-size: 26px; font-weight: 600; line-height: 1; }
-    .unit { font-size: 13px; color: #64748b; font-weight: 400; }
+    .unit { font-size: 13px; color: var(--text-muted); font-weight: 400; }
     .sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
     .bar-bg { background: var(--bg-input); border-radius: 4px; height: 6px; margin-top: 10px; overflow: hidden; }
     .bar { height: 6px; border-radius: 4px; transition: width 0.5s ease; }
     .clock-value { font-size: 34px; font-weight: 600; letter-spacing: -1px; }
-    .net-row { display: flex; justify-content: space-between; margin-top:4px; }
+    .net-row { display: flex; justify-content: space-between; margin-top: 4px; }
     .net-label { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; display: flex; align-items: center; gap: 4px; }
     .net-val { font-size: 16px; font-weight: 500; }
     .weather-row { display: flex; align-items: center; gap: 16px; margin-top: 4px; }
-.weather-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 10px; background: var(--bg-input); flex-shrink: 0; }    .weather-info { display: flex; flex-direction: column; gap: 4px; }
+    .weather-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 10px; background: var(--bg-input); flex-shrink: 0; }
+    .weather-info { display: flex; flex-direction: column; gap: 4px; }
+    .card-group .card {
+      width: 100%;
+      min-width: 0;
+    }
   </style>
 </head>
 <body>
-
 <div class="titlebar">
   <div class="titlebar-left">
     <i data-lucide="layout-dashboard" style="width:14px;height:14px;color:#94a3b8"></i>
     <h1>System Dashboard</h1>
   </div>
   <div class="right">
-    <button id="themeBtn" style="-webkit-app-region:no-drag;background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;">
-  <i data-lucide="sun" style="width:13px;height:13px;color:#64748b" id="themeIcon"></i>
-</button>
     <span class="uptime-badge">
       <i data-lucide="monitor" style="width:10px;height:10px"></i>
       <span id="uptime">—</span>
     </span>
+    <button class="icon-btn" id="themeBtn">
+      <i data-lucide="sun" style="width:13px;height:13px;color:#64748b" id="themeIcon"></i>
+    </button>
+    <button class="icon-btn" id="editorBtn">
+      <i data-lucide="sliders-horizontal" style="width:13px;height:13px;color:#64748b"></i>
+    </button>
     <button class="close-btn" id="closeBtn"></button>
   </div>
 </div>
 
-<div class="content">
-
-  <!-- Saat -->
-  <div class="card">
-    <div class="card-header">
-      <i data-lucide="clock-3" style="width:13px;height:13px"></i>
-      <span class="label">Saat</span>
-    </div>
-    <div class="clock-value" id="clock">--:--:--</div>
-    <div class="sub" id="dateStr">—</div>
-  </div>
-
-  <!-- CPU + RAM -->
-  <div class="grid2">
-    <div class="card">
-      <div class="card-header">
-        <i data-lucide="cpu" style="width:13px;height:13px"></i>
-        <span class="label">CPU</span>
-      </div>
-      <div class="value" id="cpuVal" style="color:#60a5fa">—<span class="unit">%</span></div>
-      <div class="bar-bg"><div class="bar" id="cpuBar" style="background:#3b82f6;width:0%"></div></div>
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <i data-lucide="memory-stick" style="width:13px;height:13px"></i>
-        <span class="label">RAM</span>
-      </div>
-      <div class="value" id="ramVal" style="color:#a78bfa">—<span class="unit">GB</span></div>
-      <div class="bar-bg"><div class="bar" id="ramBar" style="background:#8b5cf6;width:0%"></div></div>
-      <div class="sub" id="ramSub">— / — GB</div>
-    </div>
-  </div>
-
-  <!-- İşlemler + Ekran -->
-  <div class="grid2">
-    <div class="card">
-      <div class="card-header">
-        <i data-lucide="layers" style="width:13px;height:13px"></i>
-        <span class="label">Çalışan İşlemler</span>
-      </div>
-      <div style="display:flex;align-items:baseline;gap:6px;margin-top:4px">
-        <div style="font-size:32px;font-weight:600;color:#60a5fa;line-height:1" id="procAll">—</div>
-        <div style="font-size:12px;color:#64748b">işlem</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <i data-lucide="monitor" style="width:13px;height:13px"></i>
-        <span class="label">Ekran</span>
-      </div>
-      <div style="margin-top:4px">
-        <div style="font-size:16px;font-weight:600;color:var(--text-primary)" id="displayRes">— × —</div>
-        <div style="font-size:12px;color:#64748b;margin-top:4px" id="displayHz">— Hz</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Disk -->
-  <div class="card">
-    <div class="card-header">
-      <i data-lucide="hard-drive" style="width:13px;height:13px"></i>
-      <span class="label">Disk</span>
-    </div>
-    <div class="value" id="diskVal" style="color:#34d399">—<span class="unit">%</span></div>
-    <div class="bar-bg"><div class="bar" id="diskBar" style="background:#10b981;width:0%"></div></div>
-    <div class="sub" id="diskFree">Boş: — GB</div>
-  </div>
-
-  <!-- Ağ -->
-  <div class="card">
-    <div class="card-header">
-      <i data-lucide="wifi" style="width:13px;height:13px"></i>
-      <span class="label">Ağ</span>
-    </div>
-    <div class="net-row">
-      <div>
-        <div class="net-label">
-          <i data-lucide="arrow-down" style="width:11px;height:11px;color:#34d399"></i>
-          İndirme
-        </div>
-        <div class="net-val" id="dlVal" style="color:#34d399">— MB/s</div>
-      </div>
-      <div>
-        <div class="net-label">
-          <i data-lucide="arrow-up" style="width:11px;height:11px;color:#60a5fa"></i>
-          Yükleme
-        </div>
-        <div class="net-val" id="ulVal" style="color:#60a5fa">— MB/s</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Hava Durumu -->
-<div class="card" style="position:relative">
-  <div class="card-header" style="justify-content:space-between">
-    <div style="display:flex;align-items:center;gap:6px">
-      <i data-lucide="map-pin" style="width:13px;height:13px"></i>
-      <span class="label">Hava Durumu — <span id="cityName">—</span></span>
-    </div>
-    <button id="editCityBtn" style="background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;">
-      <i data-lucide="pencil" style="width:12px;height:12px;color:#64748b"></i>
-    </button>
-  </div>
-
-  <!-- Şehir arama formu -->
-  <div id="cityForm" style="display:none;margin-bottom:10px;position:relative">
-    <div style="display:flex;gap:6px;align-items:center">
-      <div style="position:relative;flex:1">
-        <i data-lucide="search" style="width:12px;height:12px;color:#64748b;position:absolute;left:9px;top:50%;transform:translateY(-50%);pointer-events:none"></i>
-        <input id="cityInput" type="text" placeholder="Şehir ara..."
-          style="width:100%;background:#2d3148;border:1px solid #3d4460;border-radius:8px;padding:6px 10px 6px 28px;color:#e2e8f0;font-size:13px;outline:none;" />
-      </div>
-    </div>
-    <!-- Dropdown sonuçlar -->
-    <div id="cityDropdown"
-      style="display:none;position:absolute;left:0;right:0;top:38px;max-height:160px;background:#1a1d27;border:1px solid #3d4460;border-radius:10px;overflow:hidden;z-index:999;max-height:200px;overflow-y:auto">
-    </div>
-  </div>
-
-  <!-- Şehir seçilmemişse -->
-  <div id="weatherEmpty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px 0;gap:8px">
-    <i data-lucide="map-pin-off" style="width:28px;height:28px;color:#3d4460"></i>
-    <div style="font-size:13px;color:#64748b;text-align:center">Hava durumu için<br>bir şehir seçin</div>
-    <button id="selectCityBtn"
-      style="margin-top:4px;background:#2d3148;border:1px solid #3d4460;border-radius:8px;padding:6px 16px;color:#94a3b8;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px">
-      <i data-lucide="search" style="width:12px;height:12px"></i>
-      Şehir Seç
-    </button>
-  </div>
-
-  <!-- Hava durumu verisi -->
-  <div id="weatherData" style="display:none">
-    <div class="weather-row">
-      <div class="weather-icon" id="weatherIcon">
-        <i data-lucide="cloud" style="width:26px;height:26px;color:#94a3b8"></i>
-      </div>
-      <div class="weather-info">
-        <div style="font-size:28px;font-weight:600;color:#fbbf24;line-height:1" id="weatherTemp">—<span class="unit">°C</span></div>
-        <div style="font-size:13px;color:var(--text-primary);margin-top:2px" id="weatherDesc">—</div>
-        <div style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:4px;margin-top:2px">
-          <i data-lucide="droplets" style="width:11px;height:11px"></i>
-          <span id="weatherHumidity">—</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+<div class="content" id="content">
+  <!-- Kartlar renderer.js tarafından dinamik olarak oluşturulur -->
 </div>
 
-</div>
-
-<script>
-  lucide.createIcons()
-</script>
+<script>lucide.createIcons()</script>
 <script src="renderer.js"></script>
 </body>
 </html>
