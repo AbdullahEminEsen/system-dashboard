@@ -1,0 +1,25 @@
+# Bağımlılıklar
+node_modules/
+
+# Build çıktıları
+dist/
+out/
+
+# Electron build
+build/
+
+# Sistem dosyaları
+.DS_Store
+Thumbs.db
+
+# Log dosyaları
+*.log
+npm-debug.log*
+
+# Ortam değişkenleri
+.env
+.env.local
+
+# Editor klasörleri
+.vscode/
+.idea/
