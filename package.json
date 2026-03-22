@@ -1,18 +1,40 @@
 {
   "name": "system-dashboard",
   "version": "1.0.0",
+  "description": "Gerçek zamanlı sistem bilgilerini gösteren masaüstü widget",
+  "author": "AbdullahEminEsen",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder"
   },
+  "build": {
+    "appId": "com.systemdashboard.app",
+    "productName": "System Dashboard",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ]
+  },
   "dependencies": {
     "axios": "^1.6.0",
-    "electron": "^28.0.0",
     "electron-store": "^8.2.0",
     "systeminformation": "^5.21.0"
   },
   "devDependencies": {
+    "electron": "^28.0.0",
     "electron-builder": "^24.0.0"
   }
 }
