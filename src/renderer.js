@@ -13,10 +13,9 @@ const CARD_HEIGHTS = {
 }
 const GAP = 10
 const PADDING = 70
-const TITLEBAR = 48
 
 function calcHeight(layout, visible) {
-  let total = PADDING  // sadece padding, titlebar yok
+  let total = PADDING
   let itemCount = 0
 
   layout.forEach(item => {
@@ -215,8 +214,8 @@ function renderLayout(layout, visible) {
   lucide.createIcons()
   initWeatherListeners()
   setTimeout(() => {
-  ipcRenderer.send('set-window-height', calcHeight(layout, visible))
-}, 50)
+    ipcRenderer.send('set-window-height', calcHeight(layout, visible))
+  }, 50)
 }
 
 // ── Saat ────────────────────────────────────────────────────────
@@ -232,7 +231,7 @@ function updateClock() {
 }
 setInterval(updateClock, 1000)
 
-// ── Sistem ──────────────────────────────────────────────────────
+// ── Sistem (push modeli) ────────────────────────────────────────
 ipcRenderer.on('system-update', (_, d) => {
   const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html }
   const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt }
@@ -408,71 +407,15 @@ document.getElementById('themeBtn').addEventListener('click', (e) => {
   applyTheme(next)
 })
 
-// ── Pin (Always on Top) ─────────────────────────────────────────
-async function initPin() {
-  const val = await ipcRenderer.invoke('get-always-on-top')
-  updatePinIcon(val)
-}
-
-function updatePinIcon(val) {
-  const icon = document.getElementById('pinIcon')
-  icon.setAttribute('data-lucide', val ? 'pin' : 'pin-off')
-  icon.style.color = val ? '#3b82f6' : '#64748b'
-  lucide.createIcons()
-}
-
-document.getElementById('pinBtn').addEventListener('click', (e) => {
-  e.stopPropagation()
-  ipcRenderer.invoke('get-always-on-top').then(current => {
-    const next = !current
-    ipcRenderer.send('set-always-on-top', next)
-    updatePinIcon(next)
-  })
+ipcRenderer.on('theme-changed', (_, theme) => {
+  applyTheme(theme)
 })
-
-initPin()
-
-// ── Opacity (Saydam Mod) ────────────────────────────────────────
-const OPACITY_LEVELS = [1, 0.8, 0.6, 0.4]
-let currentOpacityIdx = 0
-
-async function initOpacity() {
-  const val = await ipcRenderer.invoke('get-opacity')
-  currentOpacityIdx = OPACITY_LEVELS.indexOf(val)
-  if (currentOpacityIdx === -1) currentOpacityIdx = 0
-  updateOpacityIcon(val)
-}
-
-function updateOpacityIcon(val) {
-  const icon = document.getElementById('opacityIcon')
-  if (val >= 1) {
-    icon.style.color = '#64748b'
-  } else if (val >= 0.8) {
-    icon.style.color = '#60a5fa'
-  } else if (val >= 0.6) {
-    icon.style.color = '#3b82f6'
-  } else {
-    icon.style.color = '#1d4ed8'
-  }
-  lucide.createIcons()
-}
-
-document.getElementById('opacityBtn').addEventListener('click', (e) => {
-  e.stopPropagation()
-  currentOpacityIdx = (currentOpacityIdx + 1) % OPACITY_LEVELS.length
-  const val = OPACITY_LEVELS[currentOpacityIdx]
-  ipcRenderer.send('set-opacity', val)
-  updateOpacityIcon(val)
-})
-
-initOpacity()
 
 // ── Layout güncellemeleri (editor'dan) ─────────────────────────
 ipcRenderer.on('layout-updated', (_, layout) => {
   ipcRenderer.invoke('get-visible').then(visible => {
     renderLayout(layout, visible)
     updateClock()
-    updateSystem()
     initWeather()
   })
 })
@@ -481,7 +424,6 @@ ipcRenderer.on('visible-updated', (_, visible) => {
   ipcRenderer.invoke('get-layout').then(layout => {
     renderLayout(layout, visible)
     updateClock()
-    updateSystem()
     initWeather()
   })
 })
@@ -495,10 +437,14 @@ async function init() {
   ])
   renderLayout(layout, visible)
   updateClock()
-  updateSystem()
   initWeather()
 }
 init()
+
+document.getElementById('settingsBtn').addEventListener('click', (e) => {
+  e.stopPropagation()
+  ipcRenderer.send('open-settings')
+})
 
 document.getElementById('editorBtn').addEventListener('click', (e) => {
   e.stopPropagation()

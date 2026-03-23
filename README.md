@@ -18,6 +18,11 @@ Masaüstünde her zaman üstte duran, gerçek zamanlı sistem bilgilerini göste
 |---|---|
 | ![editor_dark](screenshots/editor_dark.png) | ![editor_light](screenshots/editor_light.png) |
 
+### Ayarlar
+| Karanlık Mod | Aydınlık Mod |
+|---|---|
+| ![settings_dark](screenshots/settings_dark.png) | ![settings_light](screenshots/settings_light.png) |
+
 ## Özellikler
 
 ### Sistem Bilgileri
@@ -35,14 +40,19 @@ Masaüstünde her zaman üstte duran, gerçek zamanlı sistem bilgilerini göste
 - 👁️ İstediğin kartları gizle / göster
 - 🔲 Kartları yan yana grupla (compact mod)
 - 🌙 Aydınlık / Karanlık mod
+- 📐 Kenardan sürükleyerek boyutlandır (orantılı ölçekleme)
+
+### Ayarlar Penceresi
 - 📌 Her zaman üstte kal (oyun modu dahil)
-- 🫥 Saydam mod (4 farklı opaklık seviyesi)
+- 🫥 Saydamlık (4 farklı opaklık seviyesi)
+- 🌙 Tema değiştirme
 
 ### Performans
 - Hafif veriler (CPU, RAM) 4 saniyede bir güncellenir
 - Ağ verisi 10 saniyede bir güncellenir
 - Disk & işlem sayısı 15-30 saniyede bir güncellenir
 - Push modeli ile IPC spam önlenir
+- Ekran bilgisi, disk ve işlem sayısı cache'lenerek gereksiz sorgular azaltılır
 
 ## Kurulum
 
@@ -76,19 +86,26 @@ npm run build
 
 ## Kullanım
 
-| İkon | İşlev |
+| Buton | İşlev |
 |---|---|
 | ☀️ / 🌙 | Aydınlık / Karanlık mod geçişi |
-| 📌 | Her zaman üstte kal toggle |
-| 🫥 | Saydam mod (her tıklamada %100 → %80 → %60 → %40) |
-| ⚙️ | Kart düzenleyiciyi aç |
-| ✏️ | Hava durumu şehri değiştir |
+| ⚙️ | Ayarlar penceresini aç |
+| ⠿ | Kart düzenleyiciyi aç |
+| ✕ | Uygulamayı kapat |
 
 ### Kart Düzenleyici
 - Kartları sürükleyerek sırala
 - Göz ikonuyla kartları gizle veya göster
 - Panel ikonu ile iki kartı yan yana grupla
 - Gizli kartları tekrar ekle
+
+### Boyutlandırma
+Pencerenin kenarından tutup sürükleyerek genişletebilir veya daraltabilirsin. İçerik orantılı olarak ölçeklenir.
+
+### Ayarlar
+- **Tema** — Aydınlık / Karanlık mod toggle
+- **Saydamlık** — 4 farklı opaklık seviyesi (%100, %80, %60, %40)
+- **Her zaman üstte** — Oyunlar dahil tüm pencerelerin üzerinde kalır
 
 ## Kullanılan Teknolojiler
 

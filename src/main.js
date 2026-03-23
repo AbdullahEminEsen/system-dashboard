@@ -6,11 +6,11 @@ const Store = require('electron-store')
 const store = new Store()
 
 const DEFAULT_LAYOUT = [
-  { id: 'card-clock',   type: 'single' },
-  { id: 'group-1',      type: 'group', children: ['card-cpu', 'card-ram'] },
-  { id: 'group-2',      type: 'group', children: ['card-proc', 'card-screen'] },
-  { id: 'card-disk',    type: 'single' },
-  { id: 'card-net',     type: 'single' },
+  { id: 'card-clock', type: 'single' },
+  { id: 'group-1', type: 'group', children: ['card-cpu', 'card-ram'] },
+  { id: 'group-2', type: 'group', children: ['card-proc', 'card-screen'] },
+  { id: 'card-disk', type: 'single' },
+  { id: 'card-net', type: 'single' },
   { id: 'card-weather', type: 'single' },
 ]
 
@@ -22,8 +22,9 @@ const DEFAULT_VISIBLE = [
 
 let mainWindow
 let editorWindow
+let settingsWindow
 
-// ── Cache değişkenleri ──────────────────────────────────────────
+// ── Cache ───────────────────────────────────────────────────────
 let cachedDisplay = null
 let cachedDisk = null
 let lastDiskUpdate = 0
@@ -34,28 +35,55 @@ let lastProcessUpdate = 0
 let cachedCoords = null
 let lastCity = null
 
-// ── Pencere oluşturma ───────────────────────────────────────────
+// ── Pencereler ──────────────────────────────────────────────────
 function createMainWindow() {
-  const height = store.get('windowHeight', 860)
+  const bounds = store.get('windowBounds', { width: 420, height: 860 })
   const alwaysOnTop = store.get('alwaysOnTop', true)
   mainWindow = new BrowserWindow({
-    width: 420, height,
-    resizable: false, frame: false,
+    width: bounds.width,
+    height: bounds.height,
+    minWidth: 300,
+    maxWidth: 700,
+    resizable: true,
+    frame: false,
     alwaysOnTop,
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   })
   if (alwaysOnTop) mainWindow.setAlwaysOnTop(true, 'screen-saver')
-  mainWindow.setOpacity(store.get('opacity', 1))
   mainWindow.loadFile(path.join(__dirname, 'index.html'))
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.setOpacity(store.get('opacity', 1))
+    // Genişliğe göre zoom hesapla
+    const zoom = bounds.width / 420
+    mainWindow.webContents.setZoomFactor(zoom)
+  })
+
+  // Kullanıcı boyutu değiştirince kaydet ve zoom güncelle
+  mainWindow.on('resize', () => {
+  const [width, height] = mainWindow.getSize()
+  const zoom = width / 420
+  mainWindow.webContents.setZoomFactor(zoom)
+  
+  // Yüksekliği de zoom'a göre güncelle
+  const baseHeight = store.get('baseHeight', 860)
+  const newHeight = Math.round(baseHeight * zoom)
+  
+  if (height !== newHeight) {
+    mainWindow.setSize(width, newHeight)
+  }
+  
+  store.set('windowBounds', { width, height: newHeight })
+})
+
   mainWindow.on('closed', () => {
     if (editorWindow) editorWindow.close()
+    if (settingsWindow) settingsWindow.close()
   })
 }
 
 function createEditorWindow() {
   if (editorWindow && !editorWindow.isDestroyed()) {
-    editorWindow.focus()
-    return
+    editorWindow.focus(); return
   }
   const { x, y } = mainWindow.getBounds()
   editorWindow = new BrowserWindow({
@@ -69,8 +97,23 @@ function createEditorWindow() {
   editorWindow.on('closed', () => { editorWindow = null })
 }
 
+function createSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus(); return
+  }
+  const { x, y } = mainWindow.getBounds()
+  settingsWindow = new BrowserWindow({
+    width: 300, height: 420,
+    x: x + 430, y,
+    resizable: false, frame: false,
+    alwaysOnTop: true,
+    webPreferences: { nodeIntegration: true, contextIsolation: false }
+  })
+  settingsWindow.loadFile(path.join(__dirname, 'settings.html'))
+  settingsWindow.on('closed', () => { settingsWindow = null })
+}
+
 app.whenReady().then(() => {
-  // Ekran bilgisini sadece bir kez al
   try {
     const d = screen.getPrimaryDisplay()
     cachedDisplay = {
@@ -78,13 +121,9 @@ app.whenReady().then(() => {
       height: d.size.height,
       hz: Math.round(d.displayFrequency || 60)
     }
-  } catch {
-    cachedDisplay = { width: '—', height: '—', hz: '—' }
-  }
+  } catch { cachedDisplay = { width: '—', height: '—', hz: '—' } }
 
   createMainWindow()
-
-  // Push modeli — main process veriyi hazırlayıp renderer'a gönderir
   setInterval(pushSystemData, 4000)
 })
 
@@ -95,41 +134,29 @@ app.on('window-all-closed', () => {
 // ── Push modeli ─────────────────────────────────────────────────
 async function pushSystemData() {
   if (!mainWindow || mainWindow.isDestroyed()) return
-
   try {
     const now = Date.now()
+    const [cpu, mem] = await Promise.all([si.currentLoad(), si.mem()])
 
-    // Hafif — her 4 sn
-    const [cpu, mem] = await Promise.all([
-      si.currentLoad(),
-      si.mem()
-    ])
-
-    // Orta — her 10 sn
     if (now - lastNetUpdate > 10000) {
       cachedNet = await si.networkStats()
       lastNetUpdate = now
     }
-
-    // Ağır — her 30 sn
     if (now - lastDiskUpdate > 30000) {
       cachedDisk = await si.fsSize()
       lastDiskUpdate = now
     }
-
-    // Process — her 15 sn
     if (now - lastProcessUpdate > 15000) {
       const p = await si.processes()
       cachedProcessCount = p.all
       lastProcessUpdate = now
     }
 
-    // Uptime
     const time = await si.time()
     const h = Math.floor(time.uptime / 3600)
     const m = Math.floor((time.uptime % 3600) / 60)
 
-    const data = {
+    mainWindow.webContents.send('system-update', {
       cpu: Math.round(cpu.currentLoad),
       ram: {
         used: (mem.used / 1024 / 1024 / 1024).toFixed(1),
@@ -147,10 +174,8 @@ async function pushSystemData() {
       display: cachedDisplay,
       processes: { all: cachedProcessCount },
       uptime: `${h}s ${m}dk`
-    }
-
-    mainWindow.webContents.send('system-update', data)
-  } catch (e) {}
+    })
+  } catch (e) { }
 }
 
 // ── Hava durumu ─────────────────────────────────────────────────
@@ -158,8 +183,6 @@ ipcMain.handle('get-weather', async () => {
   try {
     const city = store.get('city', null)
     if (!city) return { temp: '—', desc: '—', humidity: '—', city: '—' }
-
-    // City değişmediyse geocoding yapma
     if (city !== lastCity || !cachedCoords) {
       const geoRes = await axios.get(
         `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=tr`
@@ -169,7 +192,6 @@ ipcMain.handle('get-weather', async () => {
       cachedCoords = { lat: loc.latitude, lon: loc.longitude, name: loc.name }
       lastCity = city
     }
-
     const weatherRes = await axios.get(
       `https://api.open-meteo.com/v1/forecast?latitude=${cachedCoords.lat}&longitude=${cachedCoords.lon}&current=temperature_2m,weathercode,relative_humidity_2m&timezone=auto`
     )
@@ -192,7 +214,6 @@ ipcMain.handle('get-weather', async () => {
 ipcMain.handle('get-city', () => store.get('city', null))
 ipcMain.on('set-city', (_, city) => {
   store.set('city', city)
-  // Şehir değişince koordinat cache'ini sıfırla
   cachedCoords = null
   lastCity = null
 })
@@ -200,9 +221,9 @@ ipcMain.on('set-city', (_, city) => {
 ipcMain.handle('get-theme', () => store.get('theme', 'dark'))
 ipcMain.on('set-theme', (_, theme) => {
   store.set('theme', theme)
-  if (editorWindow && !editorWindow.isDestroyed()) {
-    editorWindow.webContents.send('theme-changed', theme)
-  }
+  if (mainWindow) mainWindow.webContents.send('theme-changed', theme)
+  if (editorWindow && !editorWindow.isDestroyed()) editorWindow.webContents.send('theme-changed', theme)
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('theme-changed', theme)
 })
 
 ipcMain.handle('get-layout', () => store.get('layout', DEFAULT_LAYOUT))
@@ -218,19 +239,22 @@ ipcMain.on('set-visible', (_, visible) => {
 })
 
 ipcMain.on('set-window-height', (_, height) => {
-  store.set('windowHeight', height)
-  if (mainWindow) mainWindow.setContentSize(420, height)
+  if (mainWindow) {
+    store.set('baseHeight', height) // zoom'suz orijinal yükseklik
+    const [currentWidth] = mainWindow.getSize()
+    const zoom = currentWidth / 420
+    const scaledHeight = Math.round(height * zoom)
+    store.set('windowBounds', { width: currentWidth, height: scaledHeight })
+    mainWindow.setSize(currentWidth, scaledHeight)
+  }
 })
 
 ipcMain.handle('get-always-on-top', () => store.get('alwaysOnTop', true))
 ipcMain.on('set-always-on-top', (_, val) => {
   store.set('alwaysOnTop', val)
   if (mainWindow) {
-    if (val) {
-      mainWindow.setAlwaysOnTop(true, 'screen-saver')
-    } else {
-      mainWindow.setAlwaysOnTop(false)
-    }
+    if (val) mainWindow.setAlwaysOnTop(true, 'screen-saver')
+    else mainWindow.setAlwaysOnTop(false)
   }
 })
 
@@ -242,4 +266,6 @@ ipcMain.on('set-opacity', (_, val) => {
 
 ipcMain.on('open-editor', () => createEditorWindow())
 ipcMain.on('close-editor', () => { if (editorWindow) editorWindow.close() })
+ipcMain.on('open-settings', () => createSettingsWindow())
+ipcMain.on('close-settings', () => { if (settingsWindow) settingsWindow.close() })
 ipcMain.on('close-app', () => app.quit())
