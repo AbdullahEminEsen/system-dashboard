@@ -1,14 +1,15 @@
 const { ipcRenderer } = require('electron')
 
 const CARD_DEFS = {
-  'card-clock':   { label: 'Saat',         icon: 'clock-3',      single: true },
-  'card-cpu':     { label: 'CPU',           icon: 'cpu',          single: false },
-  'card-ram':     { label: 'RAM',           icon: 'memory-stick', single: false },
-  'card-proc':    { label: 'İşlemler',      icon: 'layers',       single: false },
-  'card-screen':  { label: 'Ekran',         icon: 'monitor',      single: false },
-  'card-disk':    { label: 'Disk',          icon: 'hard-drive',   single: true },
-  'card-net':     { label: 'Ağ',            icon: 'wifi',         single: true },
-  'card-weather': { label: 'Hava Durumu',   icon: 'map-pin',      single: true },
+  'card-clock': { label: 'Saat', icon: 'clock-3', single: true },
+  'card-cpu': { label: 'CPU', icon: 'cpu', single: false },
+  'card-ram': { label: 'RAM', icon: 'memory-stick', single: false },
+  'card-gpu': { label: 'GPU', icon: 'monitor-check', single: true },
+  'card-proc': { label: 'İşlemler', icon: 'layers', single: false },
+  'card-screen': { label: 'Ekran', icon: 'monitor', single: false },
+  'card-disk': { label: 'Disk', icon: 'hard-drive', single: true },
+  'card-net': { label: 'Ağ', icon: 'wifi', single: true },
+  'card-weather': { label: 'Hava Durumu', icon: 'map-pin', single: true },
 }
 
 let layout = []
@@ -97,20 +98,20 @@ function renderSlotList() {
           </div>
           <div class="slot-actions">
             ${isGroupingSource
-              ? `<button class="icon-btn active cancel-group-btn" title="İptal">
+          ? `<button class="icon-btn active cancel-group-btn" title="İptal">
                    <i data-lucide="x" style="width:13px;height:13px"></i>
                  </button>`
-              : isGroupingTarget
-                ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.id}" title="Bu kartla grupla" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
+          : isGroupingTarget
+            ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.id}" title="Bu kartla grupla" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
                      Grupla
                    </button>`
-                : `<button class="icon-btn group-btn" data-id="${slot.id}" title="Başka kartla grupla">
+            : `<button class="icon-btn group-btn" data-id="${slot.id}" title="Başka kartla grupla">
                      <i data-lucide="layout-panel-left" style="width:13px;height:13px"></i>
                    </button>
                    <button class="icon-btn danger hide-btn" data-idx="${slotIdx}" title="Gizle">
                      <i data-lucide="eye-off" style="width:13px;height:13px"></i>
                    </button>`
-            }
+        }
           </div>
         </div>`
     } else {
@@ -139,13 +140,13 @@ function renderSlotList() {
           </div>
           <div class="slot-actions">
             ${canMerge
-              ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.children[0]}" title="Bu gruba ekle" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
+          ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.children[0]}" title="Bu gruba ekle" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
                    Ekle
                  </button>`
-              : `<button class="icon-btn danger hide-btn" data-idx="${slotIdx}" title="Grubu gizle">
+          : `<button class="icon-btn danger hide-btn" data-idx="${slotIdx}" title="Grubu gizle">
                    <i data-lucide="eye-off" style="width:13px;height:13px"></i>
                  </button>`
-            }
+        }
           </div>
         </div>
         <div class="slot-children" id="children-${slotIdx}">${childrenHTML}</div>`

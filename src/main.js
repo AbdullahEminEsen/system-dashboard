@@ -8,6 +8,7 @@ const store = new Store()
 const DEFAULT_LAYOUT = [
   { id: 'card-clock', type: 'single' },
   { id: 'group-1', type: 'group', children: ['card-cpu', 'card-ram'] },
+  { id: 'card-gpu', type: 'single' },
   { id: 'group-2', type: 'group', children: ['card-proc', 'card-screen'] },
   { id: 'card-disk', type: 'single' },
   { id: 'card-net', type: 'single' },
@@ -16,6 +17,7 @@ const DEFAULT_LAYOUT = [
 
 const DEFAULT_VISIBLE = [
   'card-clock', 'card-cpu', 'card-ram',
+  'card-gpu',
   'card-proc', 'card-screen', 'card-disk',
   'card-net', 'card-weather'
 ]
@@ -34,6 +36,8 @@ let cachedProcessCount = 0
 let lastProcessUpdate = 0
 let cachedCoords = null
 let lastCity = null
+let cachedGpu = null
+let lastGpuUpdate = 0
 
 // ── Pencereler ──────────────────────────────────────────────────
 function createMainWindow() {
@@ -60,20 +64,20 @@ function createMainWindow() {
 
   // Kullanıcı boyutu değiştirince kaydet ve zoom güncelle
   mainWindow.on('resize', () => {
-  const [width, height] = mainWindow.getSize()
-  const zoom = width / 420
-  mainWindow.webContents.setZoomFactor(zoom)
-  
-  // Yüksekliği de zoom'a göre güncelle
-  const baseHeight = store.get('baseHeight', 860)
-  const newHeight = Math.round(baseHeight * zoom)
-  
-  if (height !== newHeight) {
-    mainWindow.setSize(width, newHeight)
-  }
-  
-  store.set('windowBounds', { width, height: newHeight })
-})
+    const [width, height] = mainWindow.getSize()
+    const zoom = width / 420
+    mainWindow.webContents.setZoomFactor(zoom)
+
+    // Yüksekliği de zoom'a göre güncelle
+    const baseHeight = store.get('baseHeight', 860)
+    const newHeight = Math.round(baseHeight * zoom)
+
+    if (height !== newHeight) {
+      mainWindow.setSize(width, newHeight)
+    }
+
+    store.set('windowBounds', { width, height: newHeight })
+  })
 
   mainWindow.on('closed', () => {
     if (editorWindow) editorWindow.close()
@@ -138,6 +142,26 @@ async function pushSystemData() {
     const now = Date.now()
     const [cpu, mem] = await Promise.all([si.currentLoad(), si.mem()])
 
+    // GPU — her 5 saniyede bir
+    if (now - lastGpuUpdate > 5000) {
+      try {
+        const gpuData = await si.graphics()
+        const controller = gpuData.controllers?.[0]
+        cachedGpu = {
+          name: controller?.model ?? '—',
+          vram: controller?.vram ?? null,
+          vramUsed: controller?.memoryUsed ?? null,
+          vramFree: controller?.memoryFree ?? null,
+          load: controller?.utilizationGpu ?? null,
+          memLoad: controller?.utilizationMemory ?? null,
+          temp: controller?.temperatureGpu ?? null,
+          power: controller?.powerDraw ?? null,
+          vendor: controller?.vendor ?? ''
+        }
+      } catch { cachedGpu = null }
+      lastGpuUpdate = now
+    }
+
     if (now - lastNetUpdate > 10000) {
       cachedNet = await si.networkStats()
       lastNetUpdate = now
@@ -173,7 +197,8 @@ async function pushSystemData() {
       },
       display: cachedDisplay,
       processes: { all: cachedProcessCount },
-      uptime: `${h}s ${m}dk`
+      uptime: `${h}s ${m}dk`,
+      gpu: cachedGpu
     })
   } catch (e) { }
 }

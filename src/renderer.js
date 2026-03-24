@@ -2,13 +2,14 @@ const { ipcRenderer } = require('electron')
 
 // ── Sabit yükseklikler ──────────────────────────────────────────
 const CARD_HEIGHTS = {
-  'card-clock':   95,
-  'card-cpu':     90,
-  'card-ram':     100,
-  'card-proc':    85,
-  'card-screen':  80,
-  'card-disk':    100,
-  'card-net':     90,
+  'card-clock': 95,
+  'card-cpu': 90,
+  'card-ram': 100,
+  'card-gpu': 200,
+  'card-proc': 85,
+  'card-screen': 80,
+  'card-disk': 100,
+  'card-net': 90,
   'card-weather': 135,
 }
 const GAP = 10
@@ -77,6 +78,39 @@ const CARD_TEMPLATES = {
       <div class="bar-bg"><div class="bar" id="ramBar" style="background:#8b5cf6;width:0%"></div></div>
       <div class="sub" id="ramSub">— / — GB</div>
     </div>`,
+
+  'card-gpu': () => `
+  <div class="card" id="card-gpu">
+    <div class="card-header">
+      <i data-lucide="monitor-check" style="width:13px;height:13px;color:var(--text-muted)"></i>
+      <span class="label">GPU</span>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="gpuName">—</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">Usage</div>
+        <div style="font-size:20px;font-weight:600;color:#f472b6" id="gpuLoad">—<span class="unit">%</span></div>
+        <div class="bar-bg"><div class="bar" id="gpuBar" style="background:#ec4899;width:0%"></div></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">Temp</div>
+        <div style="font-size:20px;font-weight:600;color:#fb923c" id="gpuTemp">—<span class="unit">°C</span></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">Mem Usage</div>
+        <div style="font-size:20px;font-weight:600;color:#a78bfa" id="gpuMemLoad">—<span class="unit">%</span></div>
+        <div class="bar-bg"><div class="bar" id="gpuMemBar" style="background:#8b5cf6;width:0%"></div></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">Power</div>
+        <div style="font-size:20px;font-weight:600;color:#34d399" id="gpuPower">—<span class="unit">W</span></div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;color:var(--text-muted)">VRAM Used</div>
+      <div style="font-size:11px;font-weight:500" id="gpuVramUsed">— / — MB</div>
+    </div>
+  </div>`,
 
   'card-proc': () => `
     <div class="card" id="card-proc">
@@ -242,6 +276,44 @@ ipcRenderer.on('system-update', (_, d) => {
   set('ramVal', `${d.ram.used}<span class="unit">GB</span>`)
   setStyle('ramBar', 'width', `${d.ram.percent}%`)
   setText('ramSub', `${d.ram.used} / ${d.ram.total} GB`)
+  // GPU
+  if (d.gpu) {
+    setText('gpuName', d.gpu.name)
+
+    if (d.gpu.load !== null) {
+      set('gpuLoad', `${d.gpu.load}<span class="unit">%</span>`)
+      setStyle('gpuBar', 'width', `${d.gpu.load}%`)
+    } else {
+      set('gpuLoad', `—<span class="unit">%</span>`)
+      setStyle('gpuBar', 'width', '0%')
+    }
+
+    if (d.gpu.temp !== null) {
+      set('gpuTemp', `${d.gpu.temp}<span class="unit">°C</span>`)
+    } else {
+      set('gpuTemp', `—<span class="unit">°C</span>`)
+    }
+
+    if (d.gpu.memLoad !== null) {
+      set('gpuMemLoad', `${d.gpu.memLoad}<span class="unit">%</span>`)
+      setStyle('gpuMemBar', 'width', `${d.gpu.memLoad}%`)
+    } else {
+      set('gpuMemLoad', `—<span class="unit">%</span>`)
+      setStyle('gpuMemBar', 'width', '0%')
+    }
+
+    if (d.gpu.power !== null) {
+      set('gpuPower', `${d.gpu.power.toFixed(1)}<span class="unit">W</span>`)
+    } else {
+      set('gpuPower', `—<span class="unit">W</span>`)
+    }
+
+    if (d.gpu.vramUsed !== null && d.gpu.vram !== null) {
+      setText('gpuVramUsed', `${d.gpu.vramUsed} / ${d.gpu.vram} MB`)
+    } else {
+      setText('gpuVramUsed', '— / — MB')
+    }
+  }
   setText('procAll', d.processes.all)
   set('diskVal', `${d.disk.percent}<span class="unit">%</span>`)
   setStyle('diskBar', 'width', `${d.disk.percent}%`)
@@ -257,16 +329,16 @@ ipcRenderer.on('system-update', (_, d) => {
 
 // ── Hava Durumu ─────────────────────────────────────────────────
 const iconMap = {
-  'Açık':            { icon: 'sun',            color: '#fbbf24' },
-  'Az bulutlu':      { icon: 'cloud-sun',       color: '#fbbf24' },
-  'Parçalı bulutlu': { icon: 'cloud-sun',       color: '#94a3b8' },
-  'Bulutlu':         { icon: 'cloud',           color: '#94a3b8' },
-  'Sisli':           { icon: 'wind',            color: '#94a3b8' },
-  'Çisenti':         { icon: 'cloud-drizzle',   color: '#60a5fa' },
-  'Yağmurlu':        { icon: 'cloud-rain',      color: '#60a5fa' },
-  'Karlı':           { icon: 'cloud-snow',      color: '#e2e8f0' },
-  'Sağanak':         { icon: 'cloud-rain',      color: '#3b82f6' },
-  'Fırtına':         { icon: 'cloud-lightning', color: '#f59e0b' },
+  'Açık': { icon: 'sun', color: '#fbbf24' },
+  'Az bulutlu': { icon: 'cloud-sun', color: '#fbbf24' },
+  'Parçalı bulutlu': { icon: 'cloud-sun', color: '#94a3b8' },
+  'Bulutlu': { icon: 'cloud', color: '#94a3b8' },
+  'Sisli': { icon: 'wind', color: '#94a3b8' },
+  'Çisenti': { icon: 'cloud-drizzle', color: '#60a5fa' },
+  'Yağmurlu': { icon: 'cloud-rain', color: '#60a5fa' },
+  'Karlı': { icon: 'cloud-snow', color: '#e2e8f0' },
+  'Sağanak': { icon: 'cloud-rain', color: '#3b82f6' },
+  'Fırtına': { icon: 'cloud-lightning', color: '#f59e0b' },
 }
 
 async function updateWeather() {
