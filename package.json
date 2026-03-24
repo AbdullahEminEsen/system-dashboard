@@ -11,11 +11,30 @@
   "build": {
     "appId": "com.systemdashboard.app",
     "productName": "System Dashboard",
+    "forceCodeSigning": false,
     "directories": {
       "output": "dist"
     },
     "win": {
-      "target": "nsis"
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "sign": null
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Utility"
     },
     "nsis": {
       "oneClick": false,
