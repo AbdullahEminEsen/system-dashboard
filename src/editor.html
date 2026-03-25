@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="tr">
+
 <head>
   <meta charset="UTF-8" />
   <title>Düzenle</title>
@@ -7,96 +8,250 @@
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
   <style>
     :root {
-      --bg-primary: #0f1117; --bg-card: #1a1d27; --bg-input: #2d3148;
-      --border: #2d3148; --border-input: #3d4460;
-      --text-primary: #e2e8f0; --text-secondary: #94a3b8; --text-muted: #64748b;
+      --bg-primary: #0f1117;
+      --bg-card: #1a1d27;
+      --bg-input: #2d3148;
+      --border: #2d3148;
+      --border-input: #3d4460;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
     }
+
     body.light {
-      --bg-primary: #f1f5f9; --bg-card: #ffffff; --bg-input: #e2e8f0;
-      --border: #e2e8f0; --border-input: #cbd5e1;
-      --text-primary: #0f172a; --text-secondary: #334155; --text-muted: #64748b;
+      --bg-primary: #f1f5f9;
+      --bg-card: #ffffff;
+      --bg-input: #e2e8f0;
+      --border: #e2e8f0;
+      --border-input: #cbd5e1;
+      --text-primary: #0f172a;
+      --text-secondary: #334155;
+      --text-muted: #64748b;
     }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: var(--bg-primary); color: var(--text-primary);
-      width: 340px; height: 560px; overflow: hidden; user-select: none;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      width: 340px;
+      height: 680px;
+      overflow: hidden;
+      user-select: none;
     }
+
     .titlebar {
       -webkit-app-region: drag;
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 12px 14px; background: var(--bg-card);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      background: var(--bg-card);
       border-bottom: 1px solid var(--border);
     }
-    .titlebar h1 { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
-    .close-btn { -webkit-app-region: no-drag; width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; border: none; cursor: pointer; }
-    .body { padding: 12px; height: calc(560px - 45px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
-    .section-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
-    .slot-list { display: flex; flex-direction: column; gap: 6px; }
+
+    .titlebar h1 {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .close-btn {
+      -webkit-app-region: no-drag;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ff5f57;
+      border: none;
+      cursor: pointer;
+    }
+
+    .body {
+      padding: 12px;
+      height: calc(680px - 45px);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .section-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 4px;
+    }
+
+    .slot-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
 
     /* Slot — tek kart veya grup */
     .slot {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 10px; overflow: hidden;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
     }
-    .slot.sortable-ghost { opacity: 0.3; }
-    .slot-handle {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 8px 10px; cursor: grab; border-bottom: 1px solid transparent;
-    }
-    .slot.group .slot-handle { border-bottom-color: var(--border); }
-    .slot-handle-left { display: flex; align-items: center; gap: 8px; }
-    .slot-label { font-size: 13px; font-weight: 500; }
-    .slot-actions { display: flex; align-items: center; gap: 6px; }
 
-    .icon-btn { background: none; border: none; cursor: pointer; padding: 2px; display: flex; align-items: center; color: var(--text-muted); border-radius: 4px; }
-    .icon-btn:hover { background: var(--bg-input); }
-    .icon-btn.active { color: #3b82f6; }
-    .icon-btn.danger:hover { color: #ef4444; }
+    .slot.sortable-ghost {
+      opacity: 0.3;
+    }
+
+    .slot-handle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      cursor: grab;
+      border-bottom: 1px solid transparent;
+    }
+
+    .slot.group .slot-handle {
+      border-bottom-color: var(--border);
+    }
+
+    .slot-handle-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .slot-label {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .slot-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .icon-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 2px;
+      display: flex;
+      align-items: center;
+      color: var(--text-muted);
+      border-radius: 4px;
+    }
+
+    .icon-btn:hover {
+      background: var(--bg-input);
+    }
+
+    .icon-btn.active {
+      color: #3b82f6;
+    }
+
+    .icon-btn.danger:hover {
+      color: #ef4444;
+    }
 
     /* Grup içi kart listesi */
-    .slot-children { padding: 6px; display: flex; flex-direction: column; gap: 4px; min-height: 36px; }
-    .child-item {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 6px 8px; background: var(--bg-input); border-radius: 6px; cursor: grab;
-      font-size: 12px; color: var(--text-primary);
+    .slot-children {
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 36px;
     }
-    .child-item.sortable-ghost { opacity: 0.3; }
-    .child-left { display: flex; align-items: center; gap: 6px; }
+
+    .child-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: var(--bg-input);
+      border-radius: 6px;
+      cursor: grab;
+      font-size: 12px;
+      color: var(--text-primary);
+    }
+
+    .child-item.sortable-ghost {
+      opacity: 0.3;
+    }
+
+    .child-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
 
     /* Gizli kartlar havuzu */
-    .hidden-pool { display: flex; flex-direction: column; gap: 6px; min-height: 36px; }
-    .pool-item {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 8px 10px; background: var(--bg-card); border: 1px dashed var(--border-input);
-      border-radius: 8px; font-size: 13px; color: var(--text-muted);
+    .hidden-pool {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 36px;
     }
-    .pool-item .add-btn {
-      background: none; border: 1px solid var(--border-input); color: var(--text-muted);
-      border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer;
-    }
-    .pool-item .add-btn:hover { background: var(--bg-input); color: var(--text-primary); }
 
-    .hint { font-size: 11px; color: var(--text-muted); text-align: center; padding: 6px 0; }
+    .pool-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      background: var(--bg-card);
+      border: 1px dashed var(--border-input);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .pool-item .add-btn {
+      background: none;
+      border: 1px solid var(--border-input);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .pool-item .add-btn:hover {
+      background: var(--bg-input);
+      color: var(--text-primary);
+    }
+
+    .hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 6px 0;
+    }
   </style>
 </head>
+
 <body>
-<div class="titlebar">
-  <h1>Kartları Düzenle</h1>
-  <button class="close-btn" id="closeBtn"></button>
-</div>
-<div class="body" id="editorBody">
-  <div>
-    <div class="section-label">Görünen Kartlar</div>
-    <div class="slot-list" id="slotList"></div>
+  <div class="titlebar">
+    <h1>Kartları Düzenle</h1>
+    <button class="close-btn" id="closeBtn"></button>
   </div>
-  <div>
-    <div class="section-label">Gizli Kartlar</div>
-    <div class="hidden-pool" id="hiddenPool"></div>
-    <div class="hint">Gizli kartları tekrar eklemek için + butonuna tıkla</div>
+  <div class="body" id="editorBody">
+    <div>
+      <div class="section-label">Görünen Kartlar</div>
+      <div class="slot-list" id="slotList"></div>
+    </div>
+    <div>
+      <div class="section-label">Gizli Kartlar</div>
+      <div class="hidden-pool" id="hiddenPool"></div>
+      <div class="hint">Gizli kartları tekrar eklemek için + butonuna tıkla</div>
+    </div>
   </div>
-</div>
-<script>lucide.createIcons()</script>
-<script src="editor.js"></script>
+  <script>lucide.createIcons()</script>
+  <script src="editor.js"></script>
 </body>
+
 </html>
