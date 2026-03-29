@@ -71,6 +71,14 @@ function createMainWindow() {
     store.set('windowBounds', { width, height })
     const zoom = width / 420
     mainWindow.webContents.setZoomFactor(zoom)
+    const baseHeight = store.get('baseHeight', 860)
+  const newHeight = Math.round(baseHeight * zoom)
+  
+  if (height !== newHeight) {
+    mainWindow.setSize(width, newHeight)
+  }
+  
+  store.set('windowBounds', { width, height: newHeight })
     repositionChildWindows()
   })
 
