@@ -40,6 +40,11 @@ let cachedGpu = null
 let lastGpuUpdate = 0
 let isRepositioning = false
 let repositionTimer = null
+let isSettingHeight = false
+let selectedGpuIndex = store.get('selectedGpuIndex', 0)
+let selectedDisplayIndex = store.get('selectedDisplayIndex', 0)
+let allGpus = []
+let allDisplays = []
 
 // ── Pencereler ──────────────────────────────────────────────────
 function createMainWindow() {
@@ -66,20 +71,21 @@ function createMainWindow() {
   })
 
   mainWindow.on('resize', () => {
-    if (isRepositioning) return
+    if (isSettingHeight) return
     const [width, height] = mainWindow.getSize()
-    store.set('windowBounds', { width, height })
     const zoom = width / 420
-    mainWindow.webContents.setZoomFactor(zoom)
     const baseHeight = store.get('baseHeight', 860)
-  const newHeight = Math.round(baseHeight * zoom)
-  
-  if (height !== newHeight) {
-    mainWindow.setSize(width, newHeight)
-  }
-  
-  store.set('windowBounds', { width, height: newHeight })
-    repositionChildWindows()
+    const expectedHeight = Math.round(baseHeight * zoom)
+
+    store.set('windowBounds', { width, height })
+    mainWindow.webContents.setZoomFactor(zoom)
+
+    isSettingHeight = true
+    mainWindow.setSize(width, expectedHeight)
+    setTimeout(() => {
+      isSettingHeight = false
+      repositionChildWindows()
+    }, 200)
   })
 
   // Main pencere hareket edince child pencereler de gelsin
@@ -192,15 +198,30 @@ function createSettingsWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
-    const d = screen.getPrimaryDisplay()
-    cachedDisplay = {
+    // Tüm ekranları al
+    const displays = screen.getAllDisplays()
+    allDisplays = displays.map((d, i) => ({
+      index: i,
+      name: `Display ${i + 1} (${d.size.width}x${d.size.height})`,
       width: d.size.width,
       height: d.size.height,
       hz: Math.round(d.displayFrequency || 60)
-    }
+    }))
+    const sel = allDisplays[selectedDisplayIndex] || allDisplays[0]
+    cachedDisplay = { width: sel.width, height: sel.height, hz: sel.hz }
   } catch { cachedDisplay = { width: '—', height: '—', hz: '—' } }
+
+  // GPU listesini al
+  try {
+    const gpuData = await si.graphics()
+    allGpus = gpuData.controllers.map((c, i) => ({
+      index: i,
+      name: c.model || `GPU ${i + 1}`,
+      vram: c.vram
+    }))
+  } catch { allGpus = [] }
 
   createMainWindow()
   mainWindow.once('ready-to-show', () => {
@@ -235,10 +256,10 @@ async function pushSystemData() {
       cachedProcessCount = p.all
       lastProcessUpdate = now
     }
-    if (!cachedGpu) {
+    if (!cachedGpu || now - lastGpuUpdate > 5000) {
       try {
         const gpuData = await si.graphics()
-        const controller = gpuData.controllers?.[0]
+        const controller = gpuData.controllers?.[selectedGpuIndex] || gpuData.controllers?.[0]
         cachedGpu = {
           name: controller?.model ?? '—',
           vram: controller?.vram ?? null,
@@ -379,12 +400,14 @@ ipcMain.on('set-visible', (_, visible) => {
 
 ipcMain.on('set-window-height', (_, height) => {
   if (mainWindow) {
-    store.set('baseHeight', height) // zoom'suz orijinal yükseklik
+    store.set('baseHeight', height)
     const [currentWidth] = mainWindow.getSize()
     const zoom = currentWidth / 420
     const scaledHeight = Math.round(height * zoom)
     store.set('windowBounds', { width: currentWidth, height: scaledHeight })
+    isSettingHeight = true
     mainWindow.setSize(currentWidth, scaledHeight)
+    setTimeout(() => { isSettingHeight = false }, 200)
   }
 })
 
@@ -408,6 +431,25 @@ ipcMain.on('set-opacity', (_, val) => {
       console.log('Opacity not supported on this platform')
     }
   }
+})
+
+ipcMain.handle('get-gpu-list', () => allGpus)
+ipcMain.handle('get-display-list', () => allDisplays)
+ipcMain.handle('get-selected-gpu', () => selectedGpuIndex)
+ipcMain.handle('get-selected-display', () => selectedDisplayIndex)
+
+ipcMain.on('set-selected-gpu', (_, index) => {
+  selectedGpuIndex = index
+  store.set('selectedGpuIndex', index)
+  cachedGpu = null
+  lastGpuUpdate = 0
+})
+
+ipcMain.on('set-selected-display', (_, index) => {
+  selectedDisplayIndex = index
+  store.set('selectedDisplayIndex', index)
+  const sel = allDisplays[index] || allDisplays[0]
+  cachedDisplay = { width: sel.width, height: sel.height, hz: sel.hz }
 })
 
 ipcMain.on('open-editor', () => createEditorWindow())

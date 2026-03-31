@@ -81,9 +81,13 @@ const CARD_TEMPLATES = {
 
   'card-gpu': () => `
   <div class="card" id="card-gpu">
-    <div class="card-header">
-      <i data-lucide="monitor-check" style="width:13px;height:13px;color:var(--text-muted)"></i>
-      <span class="label">GPU</span>
+    <div class="card-header" style="justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:6px">
+        <i data-lucide="monitor-check" style="width:13px;height:13px;color:var(--text-muted)"></i>
+        <span class="label">GPU</span>
+      </div>
+      <select id="gpuSelect" style="background:var(--bg-input);border:1px solid var(--border-input);border-radius:6px;padding:2px 6px;font-size:11px;color:var(--text-muted);cursor:pointer;outline:none;max-width:120px">
+      </select>
     </div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="gpuName">—</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -125,16 +129,20 @@ const CARD_TEMPLATES = {
     </div>`,
 
   'card-screen': () => `
-    <div class="card" id="card-screen">
-      <div class="card-header">
+  <div class="card" id="card-screen">
+    <div class="card-header" style="justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:6px">
         <i data-lucide="monitor" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">Ekran</span>
+        <span class="label">Display</span>
       </div>
-      <div style="margin-top:4px">
-        <div style="font-size:16px;font-weight:600;color:var(--text-primary)" id="displayRes">— × —</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px" id="displayHz">— Hz</div>
-      </div>
-    </div>`,
+      <select id="displaySelect" style="background:var(--bg-input);border:1px solid var(--border-input);border-radius:6px;padding:2px 6px;font-size:11px;color:var(--text-muted);cursor:pointer;outline:none;max-width:100px">
+      </select>
+    </div>
+    <div style="margin-top:4px">
+      <div style="font-size:16px;font-weight:600;color:var(--text-primary)" id="displayRes">— × —</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px" id="displayHz">— Hz</div>
+    </div>
+  </div>`,
 
   'card-disk': () => `
     <div class="card" id="card-disk">
@@ -247,6 +255,7 @@ function renderLayout(layout, visible) {
 
   lucide.createIcons()
   initWeatherListeners()
+  initSelectListeners()
   setTimeout(() => {
     ipcRenderer.send('set-window-height', calcHeight(layout, visible))
   }, 50)
@@ -326,6 +335,37 @@ ipcRenderer.on('system-update', (_, d) => {
   setText('dlVal', `${d.net.download} MB/s`)
   setText('ulVal', `${d.net.upload} MB/s`)
 })
+
+async function initSelectListeners() {
+  const gpuSelect = document.getElementById('gpuSelect')
+  const displaySelect = document.getElementById('displaySelect')
+
+  if (gpuSelect) {
+    const [gpus, selectedGpu] = await Promise.all([
+      ipcRenderer.invoke('get-gpu-list'),
+      ipcRenderer.invoke('get-selected-gpu')
+    ])
+    gpuSelect.innerHTML = gpus.map(g =>
+      `<option value="${g.index}" ${g.index === selectedGpu ? 'selected' : ''}>${g.name.slice(0, 18)}</option>`
+    ).join('')
+    gpuSelect.addEventListener('change', (e) => {
+      ipcRenderer.send('set-selected-gpu', parseInt(e.target.value))
+    })
+  }
+
+  if (displaySelect) {
+    const [displays, selectedDisplay] = await Promise.all([
+      ipcRenderer.invoke('get-display-list'),
+      ipcRenderer.invoke('get-selected-display')
+    ])
+    displaySelect.innerHTML = displays.map(d =>
+      `<option value="${d.index}" ${d.index === selectedDisplay ? 'selected' : ''}>${d.name.slice(0, 16)}</option>`
+    ).join('')
+    displaySelect.addEventListener('change', (e) => {
+      ipcRenderer.send('set-selected-display', parseInt(e.target.value))
+    })
+  }
+}
 
 // ── Hava Durumu ─────────────────────────────────────────────────
 const iconMap = {
