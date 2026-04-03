@@ -15,6 +15,7 @@
     "appId": "com.systemdashboard.app",
     "productName": "System Dashboard",
     "forceCodeSigning": false,
+    "publish": null,
     "directories": {
       "output": "dist"
     },
