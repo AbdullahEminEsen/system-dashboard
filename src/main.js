@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen } = require('electron')
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron')
 const si = require('systeminformation')
 const axios = require('axios')
 const path = require('path')
@@ -23,8 +23,11 @@ const DEFAULT_VISIBLE = [
 ]
 
 let mainWindow
+let tray = null
 let editorWindow
 let settingsWindow
+
+app.isQuitting = false
 
 // ── Cache ───────────────────────────────────────────────────────
 let cachedDisplay = null
@@ -93,9 +96,75 @@ function createMainWindow() {
     repositionChildWindows()
   })
 
-  mainWindow.on('closed', () => {
-    if (editorWindow) editorWindow.close()
-    if (settingsWindow) settingsWindow.close()
+  mainWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault()
+      mainWindow.hide()
+      return false
+    }
+  })
+}
+
+function createTray() {
+  // Basit bir ikon — assets/icon.png varsa kullan, yoksa boş ikon
+  let icon
+  try {
+    icon = nativeImage.createFromPath(path.join(__dirname, '../assets/icon.png'))
+    icon = icon.resize({ width: 16, height: 16 })
+  } catch {
+    icon = nativeImage.createEmpty()
+  }
+
+  tray = new Tray(icon)
+  tray.setToolTip('System Dashboard')
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show / Hide',
+      click: () => {
+        if (mainWindow.isVisible()) {
+          mainWindow.hide()
+        } else {
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Settings',
+      click: () => {
+        mainWindow.show()
+        createSettingsWindow()
+      }
+    },
+    {
+      label: 'Card Editor',
+      click: () => {
+        mainWindow.show()
+        createEditorWindow()
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.isQuitting = true
+        app.quit()
+      }
+    }
+  ])
+
+  tray.setContextMenu(contextMenu)
+
+  // Tray ikonuna tıklayınca göster/gizle
+  tray.on('click', () => {
+    if (mainWindow.isVisible()) {
+      mainWindow.hide()
+    } else {
+      mainWindow.show()
+      mainWindow.focus()
+    }
   })
 }
 
@@ -224,14 +293,17 @@ app.whenReady().then(async () => {
   } catch { allGpus = [] }
 
   createMainWindow()
+  createTray()
   mainWindow.once('ready-to-show', () => {
     setTimeout(pushSystemData, 500)
   })
   setInterval(pushSystemData, 4000)
 })
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+app.on('window-all-closed', (e) => {
+  if (process.platform !== 'darwin' && !app.isQuitting) {
+    e.preventDefault()
+  }
 })
 
 // ── Push modeli ─────────────────────────────────────────────────
@@ -456,4 +528,7 @@ ipcMain.on('open-editor', () => createEditorWindow())
 ipcMain.on('close-editor', () => { if (editorWindow) editorWindow.close() })
 ipcMain.on('open-settings', () => createSettingsWindow())
 ipcMain.on('close-settings', () => { if (settingsWindow) settingsWindow.close() })
-ipcMain.on('close-app', () => app.quit())
+ipcMain.on('close-app', () => {
+  app.isQuitting = true
+  app.quit()
+})
