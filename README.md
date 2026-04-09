@@ -31,8 +31,15 @@ Head over to the [Releases](https://github.com/AbdullahEminEsen/system-dashboard
 |---|---|
 | `System Dashboard Setup x.x.x.exe` | Windows installer (recommended) |
 | `System Dashboard x.x.x.exe` | Windows portable, no installation needed |
+| `System Dashboard-x.x.x-arm64.dmg` | macOS Apple Silicon (M1/M2/M3) |
+| `System Dashboard-x.x.x-x64.dmg` | macOS Intel |
+| `System Dashboard-x.x.x.AppImage` | Linux |
 
-> Linux and macOS builds are coming soon.
+> **⚠️ Windows:** You may see a SmartScreen warning. Click **"More info"** → **"Run anyway"**. The app is open source and safe to install.
+
+> **🍎 macOS:** Full macOS support is currently being tested and improved. Some features (e.g. transparency) may behave differently depending on your system.
+
+> **🐧 Linux:** Tested on Debian 12. Transparency is not supported on Wayland sessions without a compositor.
 
 ## Features
 
@@ -41,7 +48,8 @@ Head over to the [Releases](https://github.com/AbdullahEminEsen/system-dashboard
 - 💾 Disk usage and free space
 - 🌐 Network speed (download / upload)
 - ⚙️ Running process count
-- 🖥️ Screen resolution & refresh rate
+- 🖥️ Screen resolution & refresh rate (multi-display support)
+- 🎮 GPU usage, temperature, VRAM & power draw (NVIDIA full support, AMD model info only)
 - 🌤️ Weather (city selectable)
 - 🕐 Clock & date
 - ⏱️ System uptime
@@ -52,11 +60,17 @@ Head over to the [Releases](https://github.com/AbdullahEminEsen/system-dashboard
 - 🔲 Group cards side by side (compact mode)
 - 🌙 Light / Dark mode
 - 📐 Drag window edges to resize (proportional scaling)
+- 🖥️ Select active GPU and display from a dropdown
 
 ### Settings Panel
 - 📌 Always on top (works in games too)
 - 🫥 Transparency (4 opacity levels)
 - 🌙 Theme toggle
+
+### System Tray
+- App runs in the background when closed
+- Click tray icon to show / hide the widget
+- Right-click for quick access to Settings and Card Editor
 
 ### Performance
 - Light data (CPU, RAM) updates every 4 seconds
@@ -102,7 +116,7 @@ The installer will be generated in the `dist` folder.
 | ☀️ / 🌙 | Toggle light / dark mode |
 | ⚙️ | Open settings |
 | ⠿ | Open card editor |
-| ✕ | Close the app |
+| ✕ | Minimize to tray |
 
 ### Card Editor
 - Drag slots to reorder cards
@@ -117,6 +131,24 @@ Drag any edge of the window to resize. The content scales proportionally.
 - **Theme** — Toggle between light and dark mode
 - **Opacity** — Choose from 4 transparency levels (100%, 80%, 60%, 40%)
 - **Always on top** — Stay above all windows, including fullscreen games
+
+### System Tray
+The app minimizes to the system tray when closed. Click the tray icon to show or hide the widget. Right-click for quick access to Settings, Card Editor, and Quit.
+
+## Platform Support
+
+| Feature | Windows | macOS | Linux |
+|---|---|---|---|
+| CPU & RAM | ✅ | ✅ | ✅ |
+| GPU (NVIDIA) | ✅ | ✅ | ✅ |
+| GPU (AMD) | ⚠️ Model only | ⚠️ Model only | ⚠️ Model only |
+| Temperature | ✅ NVIDIA | ✅ NVIDIA | ✅ NVIDIA |
+| Transparency | ✅ | ✅ | ⚠️ X11 only |
+| Always on top | ✅ | ✅ | ✅ |
+| System tray | ✅ | ✅ | ✅ |
+| Multi-display | ✅ | ✅ | ✅ |
+
+> macOS support is actively being tested and improved.
 
 ## Tech Stack
 
