@@ -1,148 +1,299 @@
 <!DOCTYPE html>
 <html lang="tr">
+
 <head>
   <meta charset="UTF-8" />
   <title>Ayarlar</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     :root {
-      --bg-primary: #0f1117; --bg-card: #1a1d27; --bg-input: #2d3148;
-      --border: #2d3148; --border-input: #3d4460;
-      --text-primary: #e2e8f0; --text-secondary: #94a3b8; --text-muted: #64748b;
+      --bg-primary: #0f1117;
+      --bg-card: #1a1d27;
+      --bg-input: #2d3148;
+      --border: #2d3148;
+      --border-input: #3d4460;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
     }
+
     body.light {
-      --bg-primary: #f1f5f9; --bg-card: #ffffff; --bg-input: #e2e8f0;
-      --border: #e2e8f0; --border-input: #cbd5e1;
-      --text-primary: #0f172a; --text-secondary: #334155; --text-muted: #64748b;
+      --bg-primary: #f1f5f9;
+      --bg-card: #ffffff;
+      --bg-input: #e2e8f0;
+      --border: #e2e8f0;
+      --border-input: #cbd5e1;
+      --text-primary: #0f172a;
+      --text-secondary: #334155;
+      --text-muted: #64748b;
     }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: var(--bg-primary); color: var(--text-primary);
-      width: 300px; height: 420px; overflow: hidden; user-select: none;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      width: 300px;
+      height: 420px;
+      overflow: hidden;
+      user-select: none;
     }
+
     .titlebar {
       -webkit-app-region: drag;
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 12px 14px; background: var(--bg-card);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      background: var(--bg-card);
       border-bottom: 1px solid var(--border);
     }
-    .titlebar h1 { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
-    .close-btn { -webkit-app-region: no-drag; width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; border: none; cursor: pointer; }
-    .body { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
-    .section-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin: 6px 0 4px; }
-    .setting-row {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 12px; background: var(--bg-card);
-      border: 1px solid var(--border); border-radius: 10px;
+
+    .titlebar h1 {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
     }
-    .setting-left { display: flex; align-items: center; gap: 10px; }
-    .setting-label { font-size: 13px; color: var(--text-primary); }
-    .setting-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+    .close-btn {
+      -webkit-app-region: no-drag;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ff5f57;
+      border: none;
+      cursor: pointer;
+    }
+
+    .body {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .section-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin: 6px 0 4px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    .setting-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .setting-label {
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+
+    .setting-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
 
     /* Toggle switch */
-    .toggle { position: relative; width: 36px; height: 20px; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
     .toggle-slider {
-      position: absolute; cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: var(--bg-input); border-radius: 20px;
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--bg-input);
+      border-radius: 20px;
       transition: 0.2s;
     }
+
     .toggle-slider:before {
-      position: absolute; content: '';
-      height: 14px; width: 14px; left: 3px; bottom: 3px;
-      background: var(--text-muted); border-radius: 50%;
+      position: absolute;
+      content: '';
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background: var(--text-muted);
+      border-radius: 50%;
       transition: 0.2s;
     }
-    .toggle input:checked + .toggle-slider { background: #3b82f6; }
-    .toggle input:checked + .toggle-slider:before {
+
+    .toggle input:checked+.toggle-slider {
+      background: #3b82f6;
+    }
+
+    .toggle input:checked+.toggle-slider:before {
       transform: translateX(16px);
       background: white;
     }
 
     /* Stepper */
-    .stepper { display: flex; align-items: center; gap: 8px; }
-    .stepper-btn {
-      width: 26px; height: 26px; border-radius: 6px;
-      background: var(--bg-input); border: 1px solid var(--border-input);
-      color: var(--text-primary); font-size: 16px; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
+    .stepper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-    .stepper-btn:hover { background: var(--border-input); }
-    .stepper-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    .stepper-val { font-size: 13px; font-weight: 500; min-width: 36px; text-align: center; }
+
+    .stepper-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-input);
+      color: var(--text-primary);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .stepper-btn:hover {
+      background: var(--border-input);
+    }
+
+    .stepper-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .stepper-val {
+      font-size: 13px;
+      font-weight: 500;
+      min-width: 36px;
+      text-align: center;
+    }
 
     /* Opacity blokları */
-    .opacity-blocks { display: flex; gap: 4px; }
+    .opacity-blocks {
+      display: flex;
+      gap: 4px;
+    }
+
     .opacity-block {
-      width: 20px; height: 20px; border-radius: 4px;
-      border: 1px solid var(--border-input); cursor: pointer;
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      border: 1px solid var(--border-input);
+      cursor: pointer;
       transition: border-color 0.15s;
     }
-    .opacity-block.active { border-color: #3b82f6; box-shadow: 0 0 0 2px #3b82f620; }
+
+    .opacity-block.active {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px #3b82f620;
+    }
   </style>
 </head>
+
 <body>
-<div class="titlebar">
-  <h1>Ayarlar</h1>
-  <button class="close-btn" id="closeBtn"></button>
-</div>
-<div class="body">
+  <div class="titlebar">
+    <h1>Ayarlar</h1>
+    <button class="close-btn" id="closeBtn"></button>
+  </div>
+  <div class="body">
 
-  <div class="section-label">Görünüm</div>
+    <div class="section-label">Görünüm</div>
 
-  <!-- Tema -->
-  <div class="setting-row">
-    <div class="setting-left">
-      <i data-lucide="sun-moon" style="width:15px;height:15px;color:var(--text-muted)"></i>
-      <div>
-        <div class="setting-label">Tema</div>
-        <div class="setting-sub" id="themeSubLabel">Karanlık mod</div>
+    <!-- Tema -->
+    <div class="setting-row">
+      <div class="setting-left">
+        <i data-lucide="sun-moon" style="width:15px;height:15px;color:var(--text-muted)"></i>
+        <div>
+          <div class="setting-label" id="themeLabelText">Tema</div>
+          <div class="setting-sub" id="themeSubLabel">Karanlık mod</div>
+        </div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="themeToggle" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Opaklık -->
+    <div class="setting-row">
+      <div class="setting-left">
+        <i data-lucide="blend" style="width:15px;height:15px;color:var(--text-muted)"></i>
+        <div>
+          <div class="setting-label" id="opacityLabelText">Saydamlık</div>
+          <div class="setting-sub" id="opacitySubLabel">%100</div>
+        </div>
+      </div>
+      <div class="opacity-blocks" id="opacityBlocks">
+        <div class="opacity-block" data-val="1" style="background:rgba(100,116,139,1)"></div>
+        <div class="opacity-block" data-val="0.8" style="background:rgba(100,116,139,0.8)"></div>
+        <div class="opacity-block" data-val="0.6" style="background:rgba(100,116,139,0.6)"></div>
+        <div class="opacity-block" data-val="0.4" style="background:rgba(100,116,139,0.4)"></div>
       </div>
     </div>
-    <label class="toggle">
-      <input type="checkbox" id="themeToggle" />
-      <span class="toggle-slider"></span>
-    </label>
-  </div>
 
-  <!-- Opaklık -->
-  <div class="setting-row">
-    <div class="setting-left">
-      <i data-lucide="blend" style="width:15px;height:15px;color:var(--text-muted)"></i>
-      <div>
-        <div class="setting-label">Saydamlık</div>
-        <div class="setting-sub" id="opacitySubLabel">%100</div>
+    <div class="section-label">Davranış</div>
+
+    <!-- Dil -->
+    <div class="setting-row">
+      <div class="setting-left">
+        <i data-lucide="languages" style="width:15px;height:15px;color:var(--text-muted)"></i>
+        <div>
+          <div class="setting-label" id="langLabel">Dil / Language</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="lang-btn" data-lang="tr"
+          style="background:var(--bg-input);border:1px solid var(--border-input);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--text-primary);cursor:pointer">TR</button>
+        <button class="lang-btn" data-lang="en"
+          style="background:var(--bg-input);border:1px solid var(--border-input);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--text-muted);cursor:pointer">EN</button>
       </div>
     </div>
-    <div class="opacity-blocks" id="opacityBlocks">
-      <div class="opacity-block" data-val="1"    style="background:rgba(100,116,139,1)"></div>
-      <div class="opacity-block" data-val="0.8"  style="background:rgba(100,116,139,0.8)"></div>
-      <div class="opacity-block" data-val="0.6"  style="background:rgba(100,116,139,0.6)"></div>
-      <div class="opacity-block" data-val="0.4"  style="background:rgba(100,116,139,0.4)"></div>
-    </div>
-  </div>
 
-  <div class="section-label">Davranış</div>
-
-  <!-- Her zaman üstte -->
-  <div class="setting-row">
-    <div class="setting-left">
-      <i data-lucide="pin" style="width:15px;height:15px;color:var(--text-muted)"></i>
-      <div>
-        <div class="setting-label">Her zaman üstte</div>
-        <div class="setting-sub">Oyunlarda da görünür</div>
+    <!-- Her zaman üstte -->
+    <div class="setting-row">
+      <div class="setting-left">
+        <i data-lucide="pin" style="width:15px;height:15px;color:var(--text-muted)"></i>
+        <div>
+          <div class="setting-label" id="alwaysOnTopLabelText">Her zaman üstte</div>
+          <div class="setting-sub" id="alwaysOnTopSubText">Oyunlarda da görünür</div>
+        </div>
       </div>
+      <label class="toggle">
+        <input type="checkbox" id="pinToggle" />
+        <span class="toggle-slider"></span>
+      </label>
     </div>
-    <label class="toggle">
-      <input type="checkbox" id="pinToggle" />
-      <span class="toggle-slider"></span>
-    </label>
-  </div>
 
-</div>
-<script>lucide.createIcons()</script>
-<script src="settings.js"></script>
+  </div>
+  <script>lucide.createIcons()</script>
+  <script src="settings.js"></script>
 </body>
+
 </html>

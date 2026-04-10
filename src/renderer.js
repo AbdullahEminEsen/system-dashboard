@@ -46,13 +46,30 @@ function calcHeight(layout, visible) {
 let currentLayout = []
 let currentVisible = []
 
+const i18n = require('./i18n')
+let currentLang = 'tr'
+let t = i18n[currentLang]
+
+async function initLang() {
+  currentLang = await ipcRenderer.invoke('get-lang')
+  t = i18n[currentLang]
+}
+
+ipcRenderer.on('lang-changed', (_, lang) => {
+  currentLang = lang
+  t = i18n[lang]
+  // Layout'u yeniden render et
+  renderLayout(currentLayout, currentVisible)
+  initWeather()
+})
+
 // ── Kart şablonları ─────────────────────────────────────────────
 const CARD_TEMPLATES = {
   'card-clock': () => `
     <div class="card" id="card-clock">
       <div class="card-header">
         <i data-lucide="clock-3" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">Saat</span>
+        <span class="label">${t.clock}</span>
       </div>
       <div class="clock-value" id="clock">--:--:--</div>
       <div class="sub" id="dateStr">—</div>
@@ -62,7 +79,7 @@ const CARD_TEMPLATES = {
     <div class="card" id="card-cpu">
       <div class="card-header">
         <i data-lucide="cpu" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">CPU</span>
+        <span class="label">${t.cpu}</span>
       </div>
       <div class="value" id="cpuVal" style="color:#60a5fa">—<span class="unit">%</span></div>
       <div class="bar-bg"><div class="bar" id="cpuBar" style="background:#3b82f6;width:0%"></div></div>
@@ -72,7 +89,7 @@ const CARD_TEMPLATES = {
     <div class="card" id="card-ram">
       <div class="card-header">
         <i data-lucide="memory-stick" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">RAM</span>
+        <span class="label">${t.ram}</span>
       </div>
       <div class="value" id="ramVal" style="color:#a78bfa">—<span class="unit">GB</span></div>
       <div class="bar-bg"><div class="bar" id="ramBar" style="background:#8b5cf6;width:0%"></div></div>
@@ -84,7 +101,7 @@ const CARD_TEMPLATES = {
     <div class="card-header" style="justify-content:space-between">
       <div style="display:flex;align-items:center;gap:6px">
         <i data-lucide="monitor-check" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">GPU</span>
+        <span class="label">${t.gpu}</span>
       </div>
       <select id="gpuSelect" style="background:var(--bg-input);border:1px solid var(--border-input);border-radius:6px;padding:2px 6px;font-size:11px;color:var(--text-muted);cursor:pointer;outline:none;max-width:120px">
       </select>
@@ -120,11 +137,11 @@ const CARD_TEMPLATES = {
     <div class="card" id="card-proc">
       <div class="card-header">
         <i data-lucide="layers" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">İşlemler</span>
+        <span class="label">${t.processes}</span>
       </div>
       <div style="display:flex;align-items:baseline;gap:6px;margin-top:4px">
         <div style="font-size:32px;font-weight:600;color:#60a5fa;line-height:1" id="procAll">—</div>
-        <div style="font-size:12px;color:var(--text-muted)">işlem</div>
+        <div style="font-size:12px;color:var(--text-muted)" id="procUnit">${t.processUnit}</div>
       </div>
     </div>`,
 
@@ -133,7 +150,7 @@ const CARD_TEMPLATES = {
     <div class="card-header" style="justify-content:space-between">
       <div style="display:flex;align-items:center;gap:6px">
         <i data-lucide="monitor" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">Display</span>
+        <span class="label">${t.screen}</span>
       </div>
       <select id="displaySelect" style="background:var(--bg-input);border:1px solid var(--border-input);border-radius:6px;padding:2px 6px;font-size:11px;color:var(--text-muted);cursor:pointer;outline:none;max-width:100px">
       </select>
@@ -148,7 +165,7 @@ const CARD_TEMPLATES = {
     <div class="card" id="card-disk">
       <div class="card-header">
         <i data-lucide="hard-drive" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">Disk</span>
+        <span class="label">${t.disk}</span>
       </div>
       <div class="value" id="diskVal" style="color:#34d399">—<span class="unit">%</span></div>
       <div class="bar-bg"><div class="bar" id="diskBar" style="background:#10b981;width:0%"></div></div>
@@ -159,7 +176,7 @@ const CARD_TEMPLATES = {
     <div class="card" id="card-net">
       <div class="card-header">
         <i data-lucide="wifi" style="width:13px;height:13px;color:var(--text-muted)"></i>
-        <span class="label">Ağ</span>
+        <span class="label">${t.net}</span>
       </div>
       <div class="net-row">
         <div>
@@ -182,7 +199,7 @@ const CARD_TEMPLATES = {
       <div class="card-header" style="justify-content:space-between">
         <div style="display:flex;align-items:center;gap:6px">
           <i data-lucide="map-pin" style="width:13px;height:13px;color:var(--text-muted)"></i>
-          <span class="label">Hava Durumu — <span id="cityName">—</span></span>
+          <span class="label">${t.weather} — <span id="cityName">—</span></span>
         </div>
         <button id="editCityBtn" style="background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;">
           <i data-lucide="pencil" style="width:12px;height:12px;color:var(--text-muted)"></i>
@@ -324,6 +341,7 @@ ipcRenderer.on('system-update', (_, d) => {
     }
   }
   setText('procAll', d.processes.all)
+  setText('procUnit', t.processUnit)
   set('diskVal', `${d.disk.percent}<span class="unit">%</span>`)
   setStyle('diskBar', 'width', `${d.disk.percent}%`)
   setText('diskFree', `Boş: ${d.disk.free} GB`)
@@ -331,7 +349,7 @@ ipcRenderer.on('system-update', (_, d) => {
     setText('displayRes', `${d.display.width} × ${d.display.height}`)
     setText('displayHz', `${d.display.hz} Hz`)
   }
-  setText('uptime', d.uptime)
+  setText('uptime', t.uptime(h, m))
   setText('dlVal', `${d.net.download} MB/s`)
   setText('ulVal', `${d.net.upload} MB/s`)
 })
@@ -543,6 +561,7 @@ ipcRenderer.on('visible-updated', (_, visible) => {
 // ── Başlat ──────────────────────────────────────────────────────
 async function init() {
   await initTheme()
+  await initLang()
   const [layout, visible] = await Promise.all([
     ipcRenderer.invoke('get-layout'),
     ipcRenderer.invoke('get-visible')
@@ -564,5 +583,5 @@ document.getElementById('editorBtn').addEventListener('click', (e) => {
 })
 
 document.getElementById('closeBtn').addEventListener('click', () => {
-  ipcRenderer.send('close-app')
+  ipcRenderer.send('hide-app')
 })

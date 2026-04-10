@@ -44,6 +44,48 @@ document.querySelectorAll('.opacity-block').forEach(block => {
   })
 })
 
+// ── Dil ─────────────────────────────────────────────────────────
+async function initLang() {
+  const lang = await ipcRenderer.invoke('get-lang')
+  updateLangUI(lang)
+}
+
+function updateLangUI(lang) {
+  const i18n = require('./i18n')
+  const t = i18n[lang]
+
+  document.querySelectorAll('.lang-btn').forEach(btn => {
+    btn.style.color = btn.dataset.lang === lang ? 'var(--text-primary)' : 'var(--text-muted)'
+    btn.style.borderColor = btn.dataset.lang === lang ? '#3b82f6' : 'var(--border-input)'
+  })
+
+  // Section label'ları güncelle
+  document.querySelectorAll('.section-label')[0].textContent = t.appearance
+  document.querySelectorAll('.section-label')[1].textContent = t.behavior
+
+  // Setting label'ları güncelle
+  document.querySelector('.titlebar h1').textContent = t.settings
+  document.getElementById('themeSubLabel').textContent =
+    document.getElementById('themeToggle').checked ? t.themeLight : t.themeDark
+  document.getElementById('themeLabelText').textContent = t.theme
+  document.getElementById('opacityLabelText').textContent = t.opacity
+  document.getElementById('alwaysOnTopLabelText').textContent = t.alwaysOnTop
+  document.getElementById('alwaysOnTopSubText').textContent = t.alwaysOnTopDesc
+  document.querySelectorAll('.setting-label')[0].textContent = t.theme
+  document.querySelectorAll('.setting-label')[1].textContent = t.opacity
+  document.querySelectorAll('.setting-label')[3].textContent = t.alwaysOnTop
+  document.querySelectorAll('.setting-sub')[1].textContent = t.alwaysOnTopDesc
+}
+
+document.querySelectorAll('.lang-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    ipcRenderer.send('set-lang', btn.dataset.lang)
+    updateLangUI(btn.dataset.lang)
+  })
+})
+
+ipcRenderer.on('lang-changed', (_, lang) => updateLangUI(lang))
+
 // ── Pin ─────────────────────────────────────────────────────────
 async function initPin() {
   const val = await ipcRenderer.invoke('get-always-on-top')
@@ -56,7 +98,7 @@ document.getElementById('pinToggle').addEventListener('change', (e) => {
 
 // ── Başlat ──────────────────────────────────────────────────────
 async function init() {
-  await Promise.all([initTheme(), initOpacity(), initPin()])
+  await Promise.all([initTheme(), initOpacity(), initPin(), initLang()])
 }
 init()
 

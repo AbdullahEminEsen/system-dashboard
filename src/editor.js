@@ -1,19 +1,38 @@
 const { ipcRenderer } = require('electron')
 
-const CARD_DEFS = {
-  'card-clock': { label: 'Saat', icon: 'clock-3', single: true },
-  'card-cpu': { label: 'CPU', icon: 'cpu', single: false },
-  'card-ram': { label: 'RAM', icon: 'memory-stick', single: false },
-  'card-gpu': { label: 'GPU', icon: 'monitor-check', single: true },
-  'card-proc': { label: 'İşlemler', icon: 'layers', single: false },
-  'card-screen': { label: 'Ekran', icon: 'monitor', single: false },
-  'card-disk': { label: 'Disk', icon: 'hard-drive', single: true },
-  'card-net': { label: 'Ağ', icon: 'wifi', single: true },
-  'card-weather': { label: 'Hava Durumu', icon: 'map-pin', single: true },
+const i18n = require('./i18n')
+let currentLang = 'tr'
+let t = i18n[currentLang]
+
+async function initLang() {
+  currentLang = await ipcRenderer.invoke('get-lang')
+  t = i18n[currentLang]
+}
+
+ipcRenderer.on('lang-changed', (_, lang) => {
+  currentLang = lang
+  t = i18n[lang]
+  updateEditorUI()
+  renderSlotList()
+  renderHiddenPool()
+})
+
+function getCardDefs() {
+  return {
+    'card-clock': { label: t.clock, icon: 'clock-3', single: true },
+    'card-cpu': { label: t.cpu, icon: 'cpu', single: false },
+    'card-ram': { label: t.ram, icon: 'memory-stick', single: false },
+    'card-gpu': { label: t.gpu, icon: 'monitor-check', single: true },
+    'card-proc': { label: t.processes, icon: 'layers', single: false },
+    'card-screen': { label: t.screen, icon: 'monitor', single: false },
+    'card-disk': { label: t.disk, icon: 'hard-drive', single: true },
+    'card-net': { label: t.net, icon: 'wifi', single: true },
+    'card-weather': { label: t.weather, icon: 'map-pin', single: true },
+  }
 }
 
 let layout = []
-let groupingCardId = null // hangi card gruplamayı bekliyor
+let groupingCardId = null
 
 function getAllVisible() {
   const ids = []
@@ -25,6 +44,7 @@ function getAllVisible() {
 }
 
 function getHidden() {
+  const CARD_DEFS = getCardDefs()
   const vis = getAllVisible()
   return Object.keys(CARD_DEFS).filter(id => !vis.includes(id))
 }
@@ -34,7 +54,6 @@ function saveAndSync() {
   ipcRenderer.send('set-visible', getAllVisible())
 }
 
-// Grup oluştur: sourceId'yi targetId'nin slotuna ekle
 function groupCards(sourceId, targetId) {
   const sourceSlotIdx = layout.findIndex(s =>
     s.type === 'single' ? s.id === sourceId : s.children?.includes(sourceId)
@@ -47,16 +66,13 @@ function groupCards(sourceId, targetId) {
   const targetSlot = layout[targetSlotIdx]
 
   if (targetSlot.type === 'single') {
-    // target tek kart → ikisini grupla
     layout[targetSlotIdx] = { id: `group-${Date.now()}`, type: 'group', children: [targetId, sourceId] }
   } else if (targetSlot.type === 'group' && targetSlot.children.length < 3) {
-    // target zaten grup → source'u ekle (max 3)
     targetSlot.children.push(sourceId)
   } else {
     return
   }
 
-  // source'u eski slot'tan kaldır
   if (layout[sourceSlotIdx].type === 'single') {
     layout.splice(sourceSlotIdx, 1)
   } else {
@@ -76,6 +92,7 @@ function groupCards(sourceId, targetId) {
 }
 
 function renderSlotList() {
+  const CARD_DEFS = getCardDefs()
   const list = document.getElementById('slotList')
   list.innerHTML = ''
 
@@ -86,6 +103,7 @@ function renderSlotList() {
 
     if (slot.type === 'single') {
       const def = CARD_DEFS[slot.id]
+      if (!def) return
       const isGroupingSource = groupingCardId === slot.id
       const isGroupingTarget = groupingCardId && groupingCardId !== slot.id
 
@@ -98,17 +116,17 @@ function renderSlotList() {
           </div>
           <div class="slot-actions">
             ${isGroupingSource
-          ? `<button class="icon-btn active cancel-group-btn" title="İptal">
+          ? `<button class="icon-btn active cancel-group-btn" title="Cancel">
                    <i data-lucide="x" style="width:13px;height:13px"></i>
                  </button>`
           : isGroupingTarget
-            ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.id}" title="Bu kartla grupla" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
-                     Grupla
+            ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.id}" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
+                     ${currentLang === 'tr' ? 'Grupla' : 'Group'}
                    </button>`
-            : `<button class="icon-btn group-btn" data-id="${slot.id}" title="Başka kartla grupla">
+            : `<button class="icon-btn group-btn" data-id="${slot.id}">
                      <i data-lucide="layout-panel-left" style="width:13px;height:13px"></i>
                    </button>
-                   <button class="icon-btn danger hide-btn" data-idx="${slotIdx}" title="Gizle">
+                   <button class="icon-btn danger hide-btn" data-idx="${slotIdx}">
                      <i data-lucide="eye-off" style="width:13px;height:13px"></i>
                    </button>`
         }
@@ -117,6 +135,7 @@ function renderSlotList() {
     } else {
       const childrenHTML = slot.children.map((c) => {
         const def = CARD_DEFS[c]
+        if (!def) return ''
         return `
           <div class="child-item" data-id="${c}" data-slot="${slotIdx}">
             <div class="child-left">
@@ -124,7 +143,7 @@ function renderSlotList() {
               <i data-lucide="${def.icon}" style="width:12px;height:12px;color:var(--text-muted)"></i>
               <span>${def.label}</span>
             </div>
-            <button class="icon-btn danger ungroup-btn" data-slot="${slotIdx}" data-id="${c}" title="Gruptan çıkar">
+            <button class="icon-btn danger ungroup-btn" data-slot="${slotIdx}" data-id="${c}">
               <i data-lucide="x" style="width:11px;height:11px"></i>
             </button>
           </div>`
@@ -136,14 +155,14 @@ function renderSlotList() {
           <div class="slot-handle-left">
             <i data-lucide="grip-vertical" style="width:12px;height:12px;color:var(--text-muted)"></i>
             <i data-lucide="layout-panel-left" style="width:13px;height:13px;color:#3b82f6"></i>
-            <span class="slot-label" style="color:#3b82f6">Grup (${slot.children.length} kart)</span>
+            <span class="slot-label" style="color:#3b82f6">${t.group(slot.children.length)}</span>
           </div>
           <div class="slot-actions">
             ${canMerge
-          ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.children[0]}" title="Bu gruba ekle" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
-                   Ekle
+          ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.children[0]}" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
+                   ${currentLang === 'tr' ? 'Ekle' : 'Add'}
                  </button>`
-          : `<button class="icon-btn danger hide-btn" data-idx="${slotIdx}" title="Grubu gizle">
+          : `<button class="icon-btn danger hide-btn" data-idx="${slotIdx}">
                    <i data-lucide="eye-off" style="width:13px;height:13px"></i>
                  </button>`
         }
@@ -155,14 +174,17 @@ function renderSlotList() {
     list.appendChild(el)
   })
 
-  // Gruplamayı iptal etme banner'ı
+  // Gruplama banner'ı
   const hint = document.getElementById('groupHint')
   if (groupingCardId) {
     if (!hint) {
+      const CARD_DEFS = getCardDefs()
       const banner = document.createElement('div')
       banner.id = 'groupHint'
       banner.style.cssText = 'background:#1e3a5f;border:1px solid #3b82f6;border-radius:8px;padding:8px 12px;font-size:12px;color:#60a5fa;text-align:center;margin-top:4px'
-      banner.textContent = `"${CARD_DEFS[groupingCardId]?.label}" ile gruplamak istediğin karta tıkla`
+      banner.textContent = currentLang === 'tr'
+        ? `"${CARD_DEFS[groupingCardId]?.label}" ile gruplamak istediğin karta tıkla`
+        : `Select a card to group with "${CARD_DEFS[groupingCardId]?.label}"`
       document.getElementById('slotList').after(banner)
     }
   } else {
@@ -176,21 +198,23 @@ function renderSlotList() {
 }
 
 function renderHiddenPool() {
+  const CARD_DEFS = getCardDefs()
   const pool = document.getElementById('hiddenPool')
   const hidden = getHidden()
   if (hidden.length === 0) {
-    pool.innerHTML = `<div class="hint">Tüm kartlar görünüyor</div>`
+    pool.innerHTML = `<div class="hint">${t.allVisible}</div>`
     return
   }
   pool.innerHTML = hidden.map(id => {
     const def = CARD_DEFS[id]
+    if (!def) return ''
     return `
       <div class="pool-item" data-id="${id}">
         <div style="display:flex;align-items:center;gap:8px">
           <i data-lucide="${def.icon}" style="width:13px;height:13px"></i>
           <span>${def.label}</span>
         </div>
-        <button class="add-btn" data-id="${id}">+ Ekle</button>
+        <button class="add-btn" data-id="${id}">${t.addCard}</button>
       </div>`
   }).join('')
   lucide.createIcons()
@@ -229,8 +253,7 @@ function initChildSortables() {
       group: 'children',
       onEnd: (evt) => {
         const fromSlot = parseInt(evt.from.id.split('-')[1])
-        const toSlotEl = evt.to.id.split('-')[1]
-        const toSlot = parseInt(toSlotEl)
+        const toSlot = parseInt(evt.to.id.split('-')[1])
         const movedId = evt.item.dataset.id
 
         layout[fromSlot].children.splice(evt.oldIndex, 1)
@@ -258,7 +281,6 @@ function initChildSortables() {
 }
 
 function bindSlotActions() {
-  // Grupla butonu
   document.querySelectorAll('.group-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       groupingCardId = btn.dataset.id
@@ -266,7 +288,6 @@ function bindSlotActions() {
     })
   })
 
-  // İptal
   document.querySelectorAll('.cancel-group-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       groupingCardId = null
@@ -274,14 +295,12 @@ function bindSlotActions() {
     })
   })
 
-  // Birleştir
   document.querySelectorAll('.merge-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       groupCards(btn.dataset.source, btn.dataset.target)
     })
   })
 
-  // Gizle
   document.querySelectorAll('.hide-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.idx)
@@ -293,7 +312,6 @@ function bindSlotActions() {
     })
   })
 
-  // Gruptan çıkar
   document.querySelectorAll('.ungroup-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const slotIdx = parseInt(btn.dataset.slot)
@@ -318,14 +336,25 @@ ipcRenderer.on('theme-changed', (_, theme) => {
   document.body.classList.toggle('light', theme === 'light')
 })
 
+function updateEditorUI() {
+  document.querySelector('.titlebar h1').textContent = t.editor
+  const sectionLabels = document.querySelectorAll('.section-label')
+  if (sectionLabels[0]) sectionLabels[0].textContent = t.visibleCards
+  if (sectionLabels[1]) sectionLabels[1].textContent = t.hiddenCards
+  const hint = document.querySelector('.hint')
+  if (hint) hint.textContent = t.hiddenHint
+}
+
 async function init() {
   const [l, , theme] = await Promise.all([
     ipcRenderer.invoke('get-layout'),
     ipcRenderer.invoke('get-visible'),
     ipcRenderer.invoke('get-theme')
   ])
+  await initLang()
   layout = JSON.parse(JSON.stringify(l))
   document.body.classList.toggle('light', theme === 'light')
+  updateEditorUI()
   renderSlotList()
   renderHiddenPool()
 }

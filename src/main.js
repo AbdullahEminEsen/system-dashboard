@@ -4,6 +4,7 @@ const axios = require('axios')
 const path = require('path')
 const Store = require('electron-store')
 const store = new Store()
+const i18n = require('./i18n')
 
 const DEFAULT_LAYOUT = [
   { id: 'card-clock', type: 'single' },
@@ -117,6 +118,14 @@ function createTray() {
 
   tray = new Tray(icon)
   tray.setToolTip('System Dashboard')
+
+  const lang = store.get('lang', 'tr')
+  updateTrayMenu(i18n[lang])
+
+  tray.on('click', () => {
+    if (mainWindow.isVisible()) mainWindow.hide()
+    else { mainWindow.show(); mainWindow.focus() }
+  })
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -442,6 +451,44 @@ ipcMain.handle('get-weather', async () => {
   } catch { return { temp: '—', desc: 'Bağlanamadı', humidity: '—', city: '—' } }
 })
 
+ipcMain.handle('get-lang', () => store.get('lang', 'tr'))
+ipcMain.on('set-lang', (_, lang) => {
+  store.set('lang', lang)
+  const t = i18n[lang]
+  if (mainWindow) mainWindow.webContents.send('lang-changed', lang)
+  if (editorWindow && !editorWindow.isDestroyed()) editorWindow.webContents.send('lang-changed', lang)
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('lang-changed', lang)
+  updateTrayMenu(t)
+})
+
+function updateTrayMenu(t) {
+  if (!tray) return
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: t.showHide,
+      click: () => {
+        if (mainWindow.isVisible()) mainWindow.hide()
+        else { mainWindow.show(); mainWindow.focus() }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: t.settings,
+      click: () => { mainWindow.show(); createSettingsWindow() }
+    },
+    {
+      label: t.editor,
+      click: () => { mainWindow.show(); createEditorWindow() }
+    },
+    { type: 'separator' },
+    {
+      label: t.quit,
+      click: () => { app.isQuitting = true; app.quit() }
+    }
+  ])
+  tray.setContextMenu(contextMenu)
+}
+
 // ── Store handlers ──────────────────────────────────────────────
 ipcMain.handle('get-city', () => store.get('city', null))
 ipcMain.on('set-city', (_, city) => {
@@ -528,6 +575,9 @@ ipcMain.on('open-editor', () => createEditorWindow())
 ipcMain.on('close-editor', () => { if (editorWindow) editorWindow.close() })
 ipcMain.on('open-settings', () => createSettingsWindow())
 ipcMain.on('close-settings', () => { if (settingsWindow) settingsWindow.close() })
+ipcMain.on('hide-app', () => {
+  if (mainWindow) mainWindow.hide()
+})
 ipcMain.on('close-app', () => {
   app.isQuitting = true
   app.quit()
