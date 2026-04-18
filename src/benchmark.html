@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Benchmark</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg-primary: #0f1117; --bg-card: #1a1d27; --bg-input: #2d3148;
+      --border: #2d3148; --border-input: #3d4460;
+      --text-primary: #e2e8f0; --text-secondary: #94a3b8; --text-muted: #64748b;
+    }
+    body.light {
+      --bg-primary: #f1f5f9; --bg-card: #ffffff; --bg-input: #e2e8f0;
+      --border: #e2e8f0; --border-input: #cbd5e1;
+      --text-primary: #0f172a; --text-secondary: #334155; --text-muted: #64748b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg-primary); color: var(--text-primary);
+      width: 420px; height: 600px; overflow-y: auto; overflow-x: hidden;
+      user-select: none;
+    }
+    .titlebar {
+      -webkit-app-region: drag;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 14px; background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .titlebar h1 { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+    .close-btn { -webkit-app-region: no-drag; width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; border: none; cursor: pointer; }
+    .body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+    .section-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
+
+    /* Seçim gridleri */
+    .select-grid { display: grid; gap: 6px; }
+    .select-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .select-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+    .select-btn {
+      padding: 8px 4px; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text-muted); font-size: 12px; cursor: pointer;
+      text-align: center; transition: all 0.15s;
+    }
+    .select-btn:hover { border-color: #3b82f6; color: var(--text-primary); }
+    .select-btn.active { border-color: #3b82f6; background: #1e3a5f; color: #60a5fa; }
+
+    /* Progress */
+    .progress-section { display: none; }
+    .progress-section.visible { display: block; }
+    .progress-bg { background: var(--bg-input); border-radius: 4px; height: 8px; overflow: hidden; margin: 8px 0; }
+    .progress-bar { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #3b82f6, #ec4899); transition: width 1s linear; width: 0%; }
+
+    /* Live stats */
+    .live-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .live-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+    .live-title { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .live-val { font-size: 22px; font-weight: 600; line-height: 1; }
+    .live-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+    /* Chart */
+    .chart-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+    .chart-title { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+
+    /* Rapor */
+    .report-section { display: none; }
+    .report-section.visible { display: block; }
+    .report-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 8px; }
+    .report-title { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+    .report-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .report-stat { text-align: center; padding: 8px; background: var(--bg-input); border-radius: 6px; }
+    .report-stat-label { font-size: 10px; color: var(--text-muted); margin-bottom: 3px; }
+    .report-stat-val { font-size: 16px; font-weight: 600; }
+    .verdict { padding: 10px 12px; border-radius: 8px; font-size: 12px; display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; }
+    .verdict.good { background: #0f2d1a; border: 1px solid #166534; color: #4ade80; }
+    .verdict.warn { background: #2d1f0a; border: 1px solid #92400e; color: #fbbf24; }
+    .verdict.danger { background: #2d0a0a; border: 1px solid #991b1b; color: #f87171; }
+
+    /* Butonlar */
+    .btn { padding: 10px; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; width: 100%; }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { background: var(--bg-input); color: var(--text-muted); cursor: not-allowed; }
+    .btn-secondary { background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-input); }
+    .btn-secondary:hover { background: var(--border-input); }
+    .btn-danger { background: #991b1b; color: white; }
+    .btn-danger:hover { background: #7f1d1d; }
+
+    .status-text { font-size: 12px; color: var(--text-muted); text-align: center; }
+    .stress-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 500;
+      background: #1e3a5f; color: #60a5fa; border: 1px solid #3b82f6;
+    }
+
+    canvas#glCanvas { display: none; }
+  </style>
+</head>
+<body>
+<div class="titlebar">
+  <h1>Stress Benchmark</h1>
+  <button class="close-btn" id="closeBtn"></button>
+</div>
+
+<div class="body">
+
+  <!-- Setup -->
+  <div id="setupSection">
+
+    <!-- Test tipi -->
+    <div class="section-label">Test Type</div>
+    <div class="select-grid cols-3" style="margin-bottom:12px">
+      <div class="select-btn active" data-type="both">
+        <div>🔥 Both</div>
+        <div style="font-size:10px;margin-top:2px;color:inherit">CPU + GPU</div>
+      </div>
+      <div class="select-btn" data-type="cpu">
+        <div>💻 CPU</div>
+        <div style="font-size:10px;margin-top:2px;color:inherit">Only CPU</div>
+      </div>
+      <div class="select-btn" data-type="gpu">
+        <div>🎮 GPU</div>
+        <div style="font-size:10px;margin-top:2px;color:inherit">Only GPU</div>
+      </div>
+    </div>
+
+    <!-- Yük seviyesi -->
+    <div class="section-label">Load Level</div>
+    <div class="select-grid cols-3" style="margin-bottom:12px">
+      <div class="select-btn" data-load="25">
+        <div>25%</div>
+        <div style="font-size:10px;margin-top:2px">Light</div>
+      </div>
+      <div class="select-btn" data-load="50">
+        <div>50%</div>
+        <div style="font-size:10px;margin-top:2px">Medium</div>
+      </div>
+      <div class="select-btn active" data-load="75">
+        <div>75%</div>
+        <div style="font-size:10px;margin-top:2px">Heavy</div>
+      </div>
+      <div class="select-btn" data-load="100">
+        <div>100%</div>
+        <div style="font-size:10px;margin-top:2px">Full Stress</div>
+      </div>
+      <div class="select-btn" data-load="custom" style="grid-column:span 2">
+        <div>Custom %</div>
+        <div style="font-size:10px;margin-top:2px">Set manually</div>
+      </div>
+    </div>
+
+    <!-- Özel yük seviyesi -->
+    <div id="customLoadSection" style="display:none;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="customLoadRange" min="10" max="100" value="75" style="flex:1">
+        <span id="customLoadVal" style="font-size:14px;font-weight:600;min-width:40px;text-align:right">75%</span>
+      </div>
+    </div>
+
+    <!-- Süre -->
+    <div class="section-label">Duration</div>
+    <div class="select-grid cols-4" style="margin-bottom:12px">
+      <div class="select-btn" data-min="1">1 min</div>
+      <div class="select-btn" data-min="3">3 min</div>
+      <div class="select-btn active" data-min="5">5 min</div>
+      <div class="select-btn" data-min="10">10 min</div>
+      <div class="select-btn" data-min="20">20 min</div>
+      <div class="select-btn" data-min="30">30 min</div>
+      <div class="select-btn" data-min="60">60 min</div>
+    </div>
+
+    <button class="btn btn-primary" id="startBtn">▶ Start Stress Test</button>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-section" id="progressSection">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <div style="display:flex;gap:6px" id="activeBadges"></div>
+      <span class="status-text" id="timeLeft">—</span>
+    </div>
+    <div class="progress-bg">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <!-- CPU Live -->
+    <div id="cpuLiveSection">
+      <div class="section-label" style="margin:10px 0 6px">CPU</div>
+      <div class="live-grid">
+        <div class="live-card">
+          <div class="live-title">Load</div>
+          <div class="live-val" id="liveCpuLoad" style="color:#60a5fa">—<span style="font-size:13px;color:var(--text-muted)">%</span></div>
+          <div class="live-sub" id="liveCpuLoadMM">min — / max —</div>
+        </div>
+        <div class="live-card">
+          <div class="live-title">Temperature</div>
+          <div class="live-val" id="liveCpuTemp" style="color:#fb923c">—<span style="font-size:13px;color:var(--text-muted)">°C</span></div>
+          <div class="live-sub" id="liveCpuTempMM">min — / max —</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GPU Live -->
+    <div id="gpuLiveSection">
+      <div class="section-label" style="margin:10px 0 6px">GPU</div>
+      <div class="live-grid">
+        <div class="live-card">
+          <div class="live-title">Load</div>
+          <div class="live-val" id="liveGpuLoad" style="color:#f472b6">—<span style="font-size:13px;color:var(--text-muted)">%</span></div>
+          <div class="live-sub" id="liveGpuLoadMM">min — / max —</div>
+        </div>
+        <div class="live-card">
+          <div class="live-title">Temperature</div>
+          <div class="live-val" id="liveGpuTemp" style="color:#fb923c">—<span style="font-size:13px;color:var(--text-muted)">°C</span></div>
+          <div class="live-sub" id="liveGpuTempMM">min — / max —</div>
+        </div>
+        <div class="live-card">
+          <div class="live-title">Power</div>
+          <div class="live-val" id="liveGpuPower" style="color:#34d399">—<span style="font-size:13px;color:var(--text-muted)">W</span></div>
+          <div class="live-sub" id="liveGpuPowerMM">min — / max —</div>
+        </div>
+        <div class="live-card">
+          <div class="live-title">VRAM Used</div>
+          <div class="live-val" id="liveGpuVram" style="color:#a78bfa">—<span style="font-size:13px;color:var(--text-muted)">MB</span></div>
+          <div class="live-sub" id="liveGpuVramTotal">/ — MB total</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Grafikler -->
+    <div class="chart-card" style="margin-top:10px">
+      <div class="chart-title">Load Over Time</div>
+      <canvas id="loadChart" height="100"></canvas>
+    </div>
+    <div class="chart-card" style="margin-top:8px">
+      <div class="chart-title">Temperature Over Time</div>
+      <canvas id="tempChart" height="100"></canvas>
+    </div>
+
+    <button class="btn btn-danger" id="stopBtn" style="margin-top:8px">⏹ Stop Test</button>
+  </div>
+
+  <!-- Rapor -->
+  <div class="report-section" id="reportSection">
+    <div class="section-label" style="margin-bottom:10px">Benchmark Report</div>
+
+    <div id="cpuReportCard" class="report-card">
+      <div class="report-title">
+        <i data-lucide="cpu" style="width:14px;height:14px"></i> CPU Results
+      </div>
+      <div class="report-grid">
+        <div class="report-stat">
+          <div class="report-stat-label">Avg Load</div>
+          <div class="report-stat-val" id="rCpuAvgLoad" style="color:#60a5fa">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Peak Load</div>
+          <div class="report-stat-val" id="rCpuMaxLoad" style="color:#60a5fa">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Min Load</div>
+          <div class="report-stat-val" id="rCpuMinLoad" style="color:#60a5fa">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Avg Temp</div>
+          <div class="report-stat-val" id="rCpuAvgTemp" style="color:#fb923c">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Peak Temp</div>
+          <div class="report-stat-val" id="rCpuMaxTemp" style="color:#fb923c">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Min Temp</div>
+          <div class="report-stat-val" id="rCpuMinTemp" style="color:#fb923c">—</div>
+        </div>
+      </div>
+      <div id="cpuVerdict" class="verdict good"></div>
+    </div>
+
+    <div id="gpuReportCard" class="report-card">
+      <div class="report-title">
+        <i data-lucide="monitor-check" style="width:14px;height:14px"></i> GPU Results
+      </div>
+      <div class="report-grid">
+        <div class="report-stat">
+          <div class="report-stat-label">Avg Load</div>
+          <div class="report-stat-val" id="rGpuAvgLoad" style="color:#f472b6">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Peak Load</div>
+          <div class="report-stat-val" id="rGpuMaxLoad" style="color:#f472b6">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Avg Temp</div>
+          <div class="report-stat-val" id="rGpuAvgTemp" style="color:#fb923c">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Peak Temp</div>
+          <div class="report-stat-val" id="rGpuMaxTemp" style="color:#fb923c">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Avg Power</div>
+          <div class="report-stat-val" id="rGpuAvgPower" style="color:#34d399">—</div>
+        </div>
+        <div class="report-stat">
+          <div class="report-stat-label">Peak Power</div>
+          <div class="report-stat-val" id="rGpuMaxPower" style="color:#34d399">—</div>
+        </div>
+      </div>
+      <div id="gpuVerdict" class="verdict good"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">Load — Full Report</div>
+      <canvas id="reportLoadChart" height="100"></canvas>
+    </div>
+    <div class="chart-card" style="margin-top:8px">
+      <div class="chart-title">Temperature — Full Report</div>
+      <canvas id="reportTempChart" height="100"></canvas>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <button class="btn btn-secondary" id="saveReportBtn">💾 Save JSON</button>
+      <button class="btn btn-primary" id="newBenchmarkBtn">▶ New Test</button>
+    </div>
+  </div>
+
+</div>
+
+<canvas id="glCanvas" width="512" height="512" style="display:none"></canvas>
+<script>lucide.createIcons()</script>
+<script src="benchmark.js"></script>
+</body>
+</html>

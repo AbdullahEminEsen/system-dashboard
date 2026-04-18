@@ -27,6 +27,7 @@ let mainWindow
 let tray = null
 let editorWindow
 let settingsWindow
+let benchmarkWindow = null
 
 app.isQuitting = false
 
@@ -42,7 +43,6 @@ let cachedCoords = null
 let lastCity = null
 let cachedGpu = null
 let lastGpuUpdate = 0
-let isRepositioning = false
 let repositionTimer = null
 let isSettingHeight = false
 let selectedGpuIndex = store.get('selectedGpuIndex', 0)
@@ -55,47 +55,32 @@ function createMainWindow() {
   const bounds = store.get('windowBounds', { width: 420, height: 860 })
   const alwaysOnTop = store.get('alwaysOnTop', true)
   mainWindow = new BrowserWindow({
-    width: bounds.width,
-    height: bounds.height,
-    minWidth: 300,
-    maxWidth: 700,
-    resizable: true,
-    frame: false,
-    alwaysOnTop,
+    width: bounds.width, height: bounds.height,
+    minWidth: 300, maxWidth: 700,
+    resizable: true, frame: false, alwaysOnTop,
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   })
   if (alwaysOnTop) mainWindow.setAlwaysOnTop(true, 'screen-saver')
   mainWindow.loadFile(path.join(__dirname, 'index.html'))
   mainWindow.once('ready-to-show', () => {
-    try {
-      mainWindow.setOpacity(store.get('opacity', 1))
-    } catch (e) { }
+    try { mainWindow.setOpacity(store.get('opacity', 1)) } catch (e) {}
     const zoom = bounds.width / 420
     mainWindow.webContents.setZoomFactor(zoom)
   })
 
   mainWindow.on('resize', () => {
     if (isSettingHeight) return
-    const [width, height] = mainWindow.getSize()
+    const [width] = mainWindow.getSize()
     const zoom = width / 420
-    const baseHeight = store.get('baseHeight', 860)
-    const expectedHeight = Math.round(baseHeight * zoom)
-
-    store.set('windowBounds', { width, height })
+    const expectedHeight = Math.round(store.get('baseHeight', 860) * zoom)
+    store.set('windowBounds', { width, height: expectedHeight })
     mainWindow.webContents.setZoomFactor(zoom)
-
     isSettingHeight = true
     mainWindow.setSize(width, expectedHeight)
-    setTimeout(() => {
-      isSettingHeight = false
-      repositionChildWindows()
-    }, 200)
+    setTimeout(() => { isSettingHeight = false; repositionChildWindows() }, 200)
   })
 
-  // Main pencere hareket edince child pencereler de gelsin
-  mainWindow.on('move', () => {
-    repositionChildWindows()
-  })
+  mainWindow.on('move', () => repositionChildWindows())
 
   mainWindow.on('close', (e) => {
     if (!app.isQuitting) {
@@ -106,15 +91,31 @@ function createMainWindow() {
   })
 }
 
+function updateTrayMenu(t) {
+  if (!tray) return
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: t.showHide,
+      click: () => {
+        if (mainWindow.isVisible()) mainWindow.hide()
+        else { mainWindow.show(); mainWindow.focus() }
+      }
+    },
+    { type: 'separator' },
+    { label: t.settings, click: () => { mainWindow.show(); createSettingsWindow() } },
+    { label: t.editor, click: () => { mainWindow.show(); createEditorWindow() } },
+    { type: 'separator' },
+    { label: t.quit, click: () => { app.isQuitting = true; app.quit() } }
+  ])
+  tray.setContextMenu(contextMenu)
+}
+
 function createTray() {
-  // Basit bir ikon — assets/icon.png varsa kullan, yoksa boş ikon
   let icon
   try {
     icon = nativeImage.createFromPath(path.join(__dirname, '../assets/icon.png'))
     icon = icon.resize({ width: 16, height: 16 })
-  } catch {
-    icon = nativeImage.createEmpty()
-  }
+  } catch { icon = nativeImage.createEmpty() }
 
   tray = new Tray(icon)
   tray.setToolTip('System Dashboard')
@@ -126,193 +127,109 @@ function createTray() {
     if (mainWindow.isVisible()) mainWindow.hide()
     else { mainWindow.show(); mainWindow.focus() }
   })
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show / Hide',
-      click: () => {
-        if (mainWindow.isVisible()) {
-          mainWindow.hide()
-        } else {
-          mainWindow.show()
-          mainWindow.focus()
-        }
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Settings',
-      click: () => {
-        mainWindow.show()
-        createSettingsWindow()
-      }
-    },
-    {
-      label: 'Card Editor',
-      click: () => {
-        mainWindow.show()
-        createEditorWindow()
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        app.isQuitting = true
-        app.quit()
-      }
-    }
-  ])
-
-  tray.setContextMenu(contextMenu)
-
-  // Tray ikonuna tıklayınca göster/gizle
-  tray.on('click', () => {
-    if (mainWindow.isVisible()) {
-      mainWindow.hide()
-    } else {
-      mainWindow.show()
-      mainWindow.focus()
-    }
-  })
-}
-
-function getChildPosition(index) {
-  const { x, y } = mainWindow.getBounds()
-  const [mainWidth] = mainWindow.getSize()
-  const gap = 8
-  // index 0 = ilk pencere (en üstte), index 1 = ikinci pencere (altında)
-  const windows = []
-  if (editorWindow && !editorWindow.isDestroyed()) windows.push(editorWindow)
-  if (settingsWindow && !settingsWindow.isDestroyed()) windows.push(settingsWindow)
-
-  let offsetY = y
-  for (let i = 0; i < index; i++) {
-    offsetY += windows[i].getSize()[1] + gap
-  }
-
-  return { x: x + mainWidth + gap, y: offsetY }
 }
 
 function repositionChildWindows() {
   if (repositionTimer) return
-
   repositionTimer = setTimeout(() => {
     repositionTimer = null
     if (!mainWindow || mainWindow.isDestroyed()) return
-
     const { x, y } = mainWindow.getBounds()
     const [mainWidth] = mainWindow.getSize()
     const gap = 8
     let offsetY = y
-
     const windows = []
     if (settingsWindow && !settingsWindow.isDestroyed()) windows.push(settingsWindow)
     if (editorWindow && !editorWindow.isDestroyed()) windows.push(editorWindow)
-
+    if (benchmarkWindow && !benchmarkWindow.isDestroyed()) windows.push(benchmarkWindow)
     windows.forEach(win => {
       win.setPosition(x + mainWidth + gap, offsetY)
       offsetY += win.getSize()[1] + gap
     })
-  }, 16) // ~60fps
+  }, 16)
 }
 
 function createEditorWindow() {
-  if (editorWindow && !editorWindow.isDestroyed()) {
-    editorWindow.focus(); return
-  }
-
+  if (editorWindow && !editorWindow.isDestroyed()) { editorWindow.focus(); return }
   const { x, y } = mainWindow.getBounds()
   const [mainWidth] = mainWindow.getSize()
   const gap = 8
-
-  // Settings açıksa editör onun altına gelir
   let offsetY = y
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    offsetY += settingsWindow.getSize()[1] + gap
-  }
-
+  if (settingsWindow && !settingsWindow.isDestroyed()) offsetY += settingsWindow.getSize()[1] + gap
   editorWindow = new BrowserWindow({
     width: 340, height: 680,
     x: x + mainWidth + gap, y: offsetY,
-    resizable: false, frame: false,
-    alwaysOnTop: true,
+    resizable: false, frame: false, alwaysOnTop: true,
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   })
   editorWindow.loadFile(path.join(__dirname, 'editor.html'))
-  editorWindow.on('closed', () => {
-    editorWindow = null
-    repositionChildWindows()
-  })
+  editorWindow.on('closed', () => { editorWindow = null; repositionChildWindows() })
 }
 
 function createSettingsWindow() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.focus(); return
-  }
-
+  if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.focus(); return }
   const { x, y } = mainWindow.getBounds()
   const [mainWidth] = mainWindow.getSize()
   const gap = 8
-
-  // Settings her zaman en üste gelir, editör varsa onun altına kayar
   settingsWindow = new BrowserWindow({
     width: 300, height: 420,
     x: x + mainWidth + gap, y,
-    resizable: false, frame: false,
-    alwaysOnTop: true,
+    resizable: false, frame: false, alwaysOnTop: true,
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   })
   settingsWindow.loadFile(path.join(__dirname, 'settings.html'))
-  settingsWindow.on('closed', () => {
-    settingsWindow = null
-    repositionChildWindows()
-  })
-
-  // Settings açılınca editör varsa aşağı kay
+  settingsWindow.on('closed', () => { settingsWindow = null; repositionChildWindows() })
   if (editorWindow && !editorWindow.isDestroyed()) {
-    const newEditorY = y + 420 + gap
-    editorWindow.setPosition(x + mainWidth + gap, newEditorY)
+    editorWindow.setPosition(x + mainWidth + gap, y + 420 + gap)
   }
+}
+
+function createBenchmarkWindow() {
+  if (benchmarkWindow && !benchmarkWindow.isDestroyed()) { benchmarkWindow.focus(); return }
+  const { x, y } = mainWindow.getBounds()
+  const [mainWidth] = mainWindow.getSize()
+  const gap = 8
+  let offsetY = y
+  if (settingsWindow && !settingsWindow.isDestroyed()) offsetY += settingsWindow.getSize()[1] + gap
+  if (editorWindow && !editorWindow.isDestroyed()) offsetY += editorWindow.getSize()[1] + gap
+  benchmarkWindow = new BrowserWindow({
+    width: 420, height: 600,
+    x: x + mainWidth + gap, y: offsetY,
+    resizable: false, frame: false, alwaysOnTop: true,
+    webPreferences: { nodeIntegration: true, contextIsolation: false }
+  })
+  benchmarkWindow.loadFile(path.join(__dirname, 'benchmark.html'))
+  benchmarkWindow.on('closed', () => { benchmarkWindow = null; repositionChildWindows() })
 }
 
 app.whenReady().then(async () => {
   try {
-    // Tüm ekranları al
     const displays = screen.getAllDisplays()
     allDisplays = displays.map((d, i) => ({
       index: i,
       name: `Display ${i + 1} (${d.size.width}x${d.size.height})`,
-      width: d.size.width,
-      height: d.size.height,
+      width: d.size.width, height: d.size.height,
       hz: Math.round(d.displayFrequency || 60)
     }))
     const sel = allDisplays[selectedDisplayIndex] || allDisplays[0]
     cachedDisplay = { width: sel.width, height: sel.height, hz: sel.hz }
   } catch { cachedDisplay = { width: '—', height: '—', hz: '—' } }
 
-  // GPU listesini al
   try {
     const gpuData = await si.graphics()
     allGpus = gpuData.controllers.map((c, i) => ({
-      index: i,
-      name: c.model || `GPU ${i + 1}`,
-      vram: c.vram
+      index: i, name: c.model || `GPU ${i + 1}`, vram: c.vram
     }))
   } catch { allGpus = [] }
 
   createMainWindow()
   createTray()
-  mainWindow.once('ready-to-show', () => {
-    setTimeout(pushSystemData, 500)
-  })
+  mainWindow.once('ready-to-show', () => setTimeout(pushSystemData, 500))
   setInterval(pushSystemData, 4000)
 })
 
 app.on('window-all-closed', (e) => {
-  if (process.platform !== 'darwin' && !app.isQuitting) {
-    e.preventDefault()
-  }
+  if (process.platform !== 'darwin' && !app.isQuitting) e.preventDefault()
 })
 
 // ── Push modeli ─────────────────────────────────────────────────
@@ -323,15 +240,12 @@ async function pushSystemData() {
     const [cpu, mem] = await Promise.all([si.currentLoad(), si.mem()])
 
     if (!cachedNet) {
-      await si.networkStats() // ilk ölçümü at
-      await new Promise(r => setTimeout(r, 1000)) // 1 saniye bekle
-      cachedNet = await si.networkStats() // ikinci ölçümü al
+      await si.networkStats()
+      await new Promise(r => setTimeout(r, 1000))
+      cachedNet = await si.networkStats()
       lastNetUpdate = now
     }
-    if (!cachedDisk) {
-      cachedDisk = await si.fsSize()
-      lastDiskUpdate = now
-    }
+    if (!cachedDisk) { cachedDisk = await si.fsSize(); lastDiskUpdate = now }
     if (!cachedProcessCount) {
       const p = await si.processes()
       cachedProcessCount = p.all
@@ -355,37 +269,13 @@ async function pushSystemData() {
       } catch { cachedGpu = null }
       lastGpuUpdate = now
     }
-
-    // GPU — her 5 saniyede bir
-    if (now - lastGpuUpdate > 5000) {
-      try {
-        const gpuData = await si.graphics()
-        const controller = gpuData.controllers?.[0]
-        cachedGpu = {
-          name: controller?.model ?? '—',
-          vram: controller?.vram ?? null,
-          vramUsed: controller?.memoryUsed ?? null,
-          vramFree: controller?.memoryFree ?? null,
-          load: controller?.utilizationGpu ?? null,
-          memLoad: controller?.utilizationMemory ?? null,
-          temp: controller?.temperatureGpu ?? null,
-          power: controller?.powerDraw ?? null,
-          vendor: controller?.vendor ?? ''
-        }
-      } catch { cachedGpu = null }
-      lastGpuUpdate = now
-    }
-
     if (now - lastNetUpdate > 10000) {
-      await si.networkStats() // ilk ölçümü at
+      await si.networkStats()
       await new Promise(r => setTimeout(r, 1000))
       cachedNet = await si.networkStats()
       lastNetUpdate = now
     }
-    if (now - lastDiskUpdate > 30000) {
-      cachedDisk = await si.fsSize()
-      lastDiskUpdate = now
-    }
+    if (now - lastDiskUpdate > 30000) { cachedDisk = await si.fsSize(); lastDiskUpdate = now }
     if (now - lastProcessUpdate > 15000) {
       const p = await si.processes()
       cachedProcessCount = p.all
@@ -395,6 +285,7 @@ async function pushSystemData() {
     const time = await si.time()
     const h = Math.floor(time.uptime / 3600)
     const m = Math.floor((time.uptime % 3600) / 60)
+    const lang = store.get('lang', 'tr')
 
     mainWindow.webContents.send('system-update', {
       cpu: Math.round(cpu.currentLoad),
@@ -413,10 +304,10 @@ async function pushSystemData() {
       },
       display: cachedDisplay,
       processes: { all: cachedProcessCount },
-      uptime: `${h}s ${m}dk`,
+      uptime: i18n[lang].uptime(h, m),
       gpu: cachedGpu
     })
-  } catch (e) { }
+  } catch (e) {}
 }
 
 // ── Hava durumu ─────────────────────────────────────────────────
@@ -429,7 +320,7 @@ ipcMain.handle('get-weather', async () => {
         `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=tr`
       )
       const loc = geoRes.data.results?.[0]
-      if (!loc) return { temp: '—', desc: 'Şehir bulunamadı', humidity: '—', city }
+      if (!loc) return { temp: '—', desc: '—', humidity: '—', city }
       cachedCoords = { lat: loc.latitude, lon: loc.longitude, name: loc.name }
       lastCity = city
     }
@@ -437,65 +328,20 @@ ipcMain.handle('get-weather', async () => {
       `https://api.open-meteo.com/v1/forecast?latitude=${cachedCoords.lat}&longitude=${cachedCoords.lon}&current=temperature_2m,weathercode,relative_humidity_2m&timezone=auto`
     )
     const c = weatherRes.data.current
-    const codes = {
-      0: 'Açık', 1: 'Az bulutlu', 2: 'Parçalı bulutlu', 3: 'Bulutlu',
-      45: 'Sisli', 51: 'Çisenti', 61: 'Yağmurlu', 71: 'Karlı',
-      80: 'Sağanak', 95: 'Fırtına'
-    }
+    const lang = store.get('lang', 'tr')
+    const codes = i18n[lang].weatherCodes
     return {
       temp: Math.round(c.temperature_2m),
-      desc: codes[c.weathercode] || 'Bilinmiyor',
+      desc: codes[c.weathercode] || (lang === 'tr' ? 'Bilinmiyor' : 'Unknown'),
       humidity: c.relative_humidity_2m,
       city: cachedCoords.name
     }
-  } catch { return { temp: '—', desc: 'Bağlanamadı', humidity: '—', city: '—' } }
+  } catch { return { temp: '—', desc: '—', humidity: '—', city: '—' } }
 })
-
-ipcMain.handle('get-lang', () => store.get('lang', 'tr'))
-ipcMain.on('set-lang', (_, lang) => {
-  store.set('lang', lang)
-  const t = i18n[lang]
-  if (mainWindow) mainWindow.webContents.send('lang-changed', lang)
-  if (editorWindow && !editorWindow.isDestroyed()) editorWindow.webContents.send('lang-changed', lang)
-  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('lang-changed', lang)
-  updateTrayMenu(t)
-})
-
-function updateTrayMenu(t) {
-  if (!tray) return
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: t.showHide,
-      click: () => {
-        if (mainWindow.isVisible()) mainWindow.hide()
-        else { mainWindow.show(); mainWindow.focus() }
-      }
-    },
-    { type: 'separator' },
-    {
-      label: t.settings,
-      click: () => { mainWindow.show(); createSettingsWindow() }
-    },
-    {
-      label: t.editor,
-      click: () => { mainWindow.show(); createEditorWindow() }
-    },
-    { type: 'separator' },
-    {
-      label: t.quit,
-      click: () => { app.isQuitting = true; app.quit() }
-    }
-  ])
-  tray.setContextMenu(contextMenu)
-}
 
 // ── Store handlers ──────────────────────────────────────────────
 ipcMain.handle('get-city', () => store.get('city', null))
-ipcMain.on('set-city', (_, city) => {
-  store.set('city', city)
-  cachedCoords = null
-  lastCity = null
-})
+ipcMain.on('set-city', (_, city) => { store.set('city', city); cachedCoords = null; lastCity = null })
 
 ipcMain.handle('get-theme', () => store.get('theme', 'dark'))
 ipcMain.on('set-theme', (_, theme) => {
@@ -503,6 +349,16 @@ ipcMain.on('set-theme', (_, theme) => {
   if (mainWindow) mainWindow.webContents.send('theme-changed', theme)
   if (editorWindow && !editorWindow.isDestroyed()) editorWindow.webContents.send('theme-changed', theme)
   if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('theme-changed', theme)
+  if (benchmarkWindow && !benchmarkWindow.isDestroyed()) benchmarkWindow.webContents.send('theme-changed', theme)
+})
+
+ipcMain.handle('get-lang', () => store.get('lang', 'tr'))
+ipcMain.on('set-lang', (_, lang) => {
+  store.set('lang', lang)
+  if (mainWindow) mainWindow.webContents.send('lang-changed', lang)
+  if (editorWindow && !editorWindow.isDestroyed()) editorWindow.webContents.send('lang-changed', lang)
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('lang-changed', lang)
+  updateTrayMenu(i18n[lang])
 })
 
 ipcMain.handle('get-layout', () => store.get('layout', DEFAULT_LAYOUT))
@@ -542,14 +398,7 @@ ipcMain.on('set-always-on-top', (_, val) => {
 ipcMain.handle('get-opacity', () => store.get('opacity', 1))
 ipcMain.on('set-opacity', (_, val) => {
   store.set('opacity', val)
-  if (mainWindow) {
-    try {
-      mainWindow.setOpacity(val)
-    } catch (e) {
-      // Linux'ta compositor yoksa sessizce geç
-      console.log('Opacity not supported on this platform')
-    }
-  }
+  if (mainWindow) { try { mainWindow.setOpacity(val) } catch (e) {} }
 })
 
 ipcMain.handle('get-gpu-list', () => allGpus)
@@ -571,14 +420,40 @@ ipcMain.on('set-selected-display', (_, index) => {
   cachedDisplay = { width: sel.width, height: sel.height, hz: sel.hz }
 })
 
+ipcMain.handle('get-benchmark-sample', async () => {
+  try {
+    const [cpu, cpuTemp, gpu, mem] = await Promise.all([
+      si.currentLoad(), si.cpuTemperature(), si.graphics(), si.mem()
+    ])
+    const ctrl = gpu.controllers?.[selectedGpuIndex] || gpu.controllers?.[0]
+    return {
+      timestamp: Date.now(),
+      cpu: {
+        load: Math.round(cpu.currentLoad),
+        temp: cpuTemp.main ?? cpuTemp.max ?? null,
+        cores: cpu.cpus?.map(c => Math.round(c.load)) ?? []
+      },
+      gpu: {
+        load: ctrl?.utilizationGpu ?? null,
+        temp: ctrl?.temperatureGpu ?? null,
+        vramUsed: ctrl?.memoryUsed ?? null,
+        vramTotal: ctrl?.vram ?? null,
+        power: ctrl?.powerDraw ?? null,
+        memLoad: ctrl?.utilizationMemory ?? null
+      },
+      ram: {
+        used: (mem.used / 1024 / 1024 / 1024).toFixed(1),
+        percent: Math.round((mem.used / mem.total) * 100)
+      }
+    }
+  } catch { return null }
+})
+
 ipcMain.on('open-editor', () => createEditorWindow())
 ipcMain.on('close-editor', () => { if (editorWindow) editorWindow.close() })
 ipcMain.on('open-settings', () => createSettingsWindow())
 ipcMain.on('close-settings', () => { if (settingsWindow) settingsWindow.close() })
-ipcMain.on('hide-app', () => {
-  if (mainWindow) mainWindow.hide()
-})
-ipcMain.on('close-app', () => {
-  app.isQuitting = true
-  app.quit()
-})
+ipcMain.on('open-benchmark', () => createBenchmarkWindow())
+ipcMain.on('close-benchmark', () => { if (benchmarkWindow) benchmarkWindow.close() })
+ipcMain.on('hide-app', () => { if (mainWindow) mainWindow.hide() })
+ipcMain.on('close-app', () => { app.isQuitting = true; app.quit() })
