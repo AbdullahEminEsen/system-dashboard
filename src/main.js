@@ -5,6 +5,7 @@ const path = require('path')
 const Store = require('electron-store')
 const store = new Store()
 const i18n = require('./i18n')
+const { execSync } = require('child_process')
 
 const DEFAULT_LAYOUT = [
   { id: 'card-clock', type: 'single' },
@@ -63,7 +64,7 @@ function createMainWindow() {
   if (alwaysOnTop) mainWindow.setAlwaysOnTop(true, 'screen-saver')
   mainWindow.loadFile(path.join(__dirname, 'index.html'))
   mainWindow.once('ready-to-show', () => {
-    try { mainWindow.setOpacity(store.get('opacity', 1)) } catch (e) {}
+    try { mainWindow.setOpacity(store.get('opacity', 1)) } catch (e) { }
     const zoom = bounds.width / 420
     mainWindow.webContents.setZoomFactor(zoom)
   })
@@ -138,13 +139,15 @@ function repositionChildWindows() {
     const [mainWidth] = mainWindow.getSize()
     const gap = 8
     let offsetY = y
+
     const windows = []
-    if (settingsWindow && !settingsWindow.isDestroyed()) windows.push(settingsWindow)
-    if (editorWindow && !editorWindow.isDestroyed()) windows.push(editorWindow)
-    if (benchmarkWindow && !benchmarkWindow.isDestroyed()) windows.push(benchmarkWindow)
-    windows.forEach(win => {
-      win.setPosition(x + mainWidth + gap, offsetY)
-      offsetY += win.getSize()[1] + gap
+    if (settingsWindow && !settingsWindow.isDestroyed()) windows.push({ win: settingsWindow, w: 300, h: 420 })
+    if (editorWindow && !editorWindow.isDestroyed()) windows.push({ win: editorWindow, w: 340, h: 680 })
+    if (benchmarkWindow && !benchmarkWindow.isDestroyed()) windows.push({ win: benchmarkWindow, w: 420, h: 600 })
+
+    windows.forEach(({ win, w, h }) => {
+      win.setBounds({ x: x + mainWidth + gap, y: offsetY, width: w, height: h })
+      offsetY += h + gap
     })
   }, 16)
 }
@@ -307,7 +310,7 @@ async function pushSystemData() {
       uptime: i18n[lang].uptime(h, m),
       gpu: cachedGpu
     })
-  } catch (e) {}
+  } catch (e) { }
 }
 
 // ── Hava durumu ─────────────────────────────────────────────────
@@ -398,7 +401,7 @@ ipcMain.on('set-always-on-top', (_, val) => {
 ipcMain.handle('get-opacity', () => store.get('opacity', 1))
 ipcMain.on('set-opacity', (_, val) => {
   store.set('opacity', val)
-  if (mainWindow) { try { mainWindow.setOpacity(val) } catch (e) {} }
+  if (mainWindow) { try { mainWindow.setOpacity(val) } catch (e) { } }
 })
 
 ipcMain.handle('get-gpu-list', () => allGpus)
@@ -420,17 +423,33 @@ ipcMain.on('set-selected-display', (_, index) => {
   cachedDisplay = { width: sel.width, height: sel.height, hz: sel.hz }
 })
 
+function getCpuTempFallback() {
+  try {
+    const out = execSync(
+      'powershell -command "(Get-WmiObject MSAcpi_ThermalZoneTemperature -Namespace root/wmi).CurrentTemperature"',
+      { timeout: 3000 }
+    ).toString().trim()
+    const lines = out.split('\n').map(l => l.trim()).filter(l => /^\d+$/.test(l))
+    if (lines.length > 0) {
+      const val = parseFloat(lines[0])
+      return Math.round((val / 10) - 273.15)
+    }
+  } catch { }
+  return null
+}
+
 ipcMain.handle('get-benchmark-sample', async () => {
   try {
     const [cpu, cpuTemp, gpu, mem] = await Promise.all([
       si.currentLoad(), si.cpuTemperature(), si.graphics(), si.mem()
     ])
     const ctrl = gpu.controllers?.[selectedGpuIndex] || gpu.controllers?.[0]
+    const cpuTempVal = cpuTemp.main ?? cpuTemp.max ?? getCpuTempFallback()
     return {
       timestamp: Date.now(),
       cpu: {
         load: Math.round(cpu.currentLoad),
-        temp: cpuTemp.main ?? cpuTemp.max ?? null,
+        temp: cpuTempVal,
         cores: cpu.cpus?.map(c => Math.round(c.load)) ?? []
       },
       gpu: {

@@ -24,7 +24,8 @@
         "nsis",
         "portable"
       ],
-      "sign": null
+      "sign": null,
+      "requestedExecutionLevel": "requireAdministrator"
     },
     "mac": {
       "target": [
