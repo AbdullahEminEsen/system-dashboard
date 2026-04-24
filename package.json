@@ -1,6 +1,6 @@
 {
   "name": "system-dashboard",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Gerçek zamanlı sistem bilgilerini gösteren masaüstü widget",
   "author": {
     "name": "Abdullah Emin Esen",
@@ -15,7 +15,6 @@
     "appId": "com.systemdashboard.app",
     "productName": "System Dashboard",
     "forceCodeSigning": false,
-    "publish": null,
     "directories": {
       "output": "dist"
     },
@@ -26,22 +25,6 @@
       ],
       "sign": null,
       "requestedExecutionLevel": "requireAdministrator"
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ]
     },
     "linux": {
       "target": [
