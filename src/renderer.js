@@ -1,68 +1,84 @@
-const { ipcRenderer } = require('electron')
+// renderer.js — runs under contextIsolation:true.
+// IPC is exposed via window.api by preload.js; i18n via window.i18n.
+// Wrapped in an IIFE so all top-level `const` bindings stay private to this
+// script and cannot collide with anything else in the page's script scope.
+; (() => {
+  const api = window.api
+  const i18n = window.i18n
 
-const i18n = require('./i18n')
-let currentLang = 'tr'
-let t = i18n[currentLang]
+  let currentLang = 'tr'
+  let t = i18n[currentLang]
 
-async function initLang() {
-  currentLang = await ipcRenderer.invoke('get-lang')
-  t = i18n[currentLang]
-}
+  async function initLang() {
+    currentLang = await api.invoke('get-lang')
+    t = i18n[currentLang]
+  }
 
-ipcRenderer.on('lang-changed', (_, lang) => {
-  currentLang = lang
-  t = i18n[lang]
-  renderLayout(currentLayout, currentVisible)
-  initWeather()
-})
-
-// ── Sabit yükseklikler ──────────────────────────────────────────
-const CARD_HEIGHTS = {
-  'card-clock':   95,
-  'card-cpu':     90,
-  'card-ram':     100,
-  'card-gpu':     200,
-  'card-proc':    85,
-  'card-screen':  80,
-  'card-disk':    100,
-  'card-net':     90,
-  'card-weather': 135,
-}
-const GAP = 10
-const PADDING = 70
-
-function calcHeight(layout, visible) {
-  let total = PADDING
-  let itemCount = 0
-  layout.forEach(item => {
-    if (item.type === 'single') {
-      if (!visible.includes(item.id)) return
-      const el = document.getElementById(item.id)
-      total += el ? el.offsetHeight : (CARD_HEIGHTS[item.id] || 90)
-      itemCount++
-    } else if (item.type === 'group') {
-      const vis = item.children.filter(c => visible.includes(c))
-      if (vis.length === 0) return
-      if (vis.length === 1) {
-        const el = document.getElementById(vis[0])
-        total += el ? el.offsetHeight : (CARD_HEIGHTS[vis[0]] || 90)
-      } else {
-        const groupEl = document.getElementById(item.id)
-        total += groupEl ? groupEl.offsetHeight : Math.max(...vis.map(c => CARD_HEIGHTS[c] || 90))
-      }
-      itemCount++
-    }
+  api.on('lang-changed', (lang) => {
+    currentLang = lang
+    t = i18n[lang]
+    renderLayout(currentLayout, currentVisible)
   })
-  total += Math.max(0, itemCount - 1) * GAP
-  return Math.max(100, total)
-}
 
-let currentLayout = []
-let currentVisible = []
+  // ── Sabit yükseklikler ──────────────────────────────────────────
+  const CARD_HEIGHTS = {
+    'card-clock': 95,
+    'card-cpu': 90,
+    'card-ram': 100,
+    'card-gpu': 200,
+    'card-proc': 85,
+    'card-screen': 80,
+    'card-disk': 100,
+    'card-net': 90,
+  }
+  const GAP = 10
+  const PADDING = 70
 
-// ── Kart şablonları ─────────────────────────────────────────────
-const CARD_TEMPLATES = {
-  'card-clock': () => `
+  function calcHeight(layout, visible) {
+    let total = PADDING
+    let itemCount = 0
+    layout.forEach(item => {
+      if (item.type === 'single') {
+        if (!visible.includes(item.id)) return
+        const el = document.getElementById(item.id)
+        total += el ? el.offsetHeight : (CARD_HEIGHTS[item.id] || 90)
+        itemCount++
+      } else if (item.type === 'group' && Array.isArray(item.children)) {
+        const vis = item.children.filter(c => visible.includes(c))
+        if (vis.length === 0) return
+        if (vis.length === 1) {
+          const el = document.getElementById(vis[0])
+          total += el ? el.offsetHeight : (CARD_HEIGHTS[vis[0]] || 90)
+        } else {
+          const groupEl = document.getElementById(item.id)
+          total += groupEl ? groupEl.offsetHeight : Math.max(...vis.map(c => CARD_HEIGHTS[c] || 90))
+        }
+        itemCount++
+      }
+    })
+    total += Math.max(0, itemCount - 1) * GAP
+    return Math.max(100, total)
+  }
+
+  let currentLayout = []
+  let currentVisible = []
+
+  // ── DOM helpers (hoisted for reuse, no closures per push) ──────
+  function elById(id) { return document.getElementById(id) }
+  function setHTML(id, html) { const el = elById(id); if (el && el.innerHTML !== html) el.innerHTML = html }
+  function setText(id, txt) {
+    const el = elById(id)
+    const s = String(txt)
+    if (el && el.textContent !== s) el.textContent = s
+  }
+  function setStyle(id, prop, val) {
+    const el = elById(id)
+    if (el && el.style[prop] !== val) el.style[prop] = val
+  }
+
+  // ── Kart şablonları ─────────────────────────────────────────────
+  const CARD_TEMPLATES = {
+    'card-clock': () => `
     <div class="card" id="card-clock">
       <div class="card-header">
         <i data-lucide="clock-3" style="width:13px;height:13px;color:var(--text-muted)"></i>
@@ -72,7 +88,7 @@ const CARD_TEMPLATES = {
       <div class="sub" id="dateStr">—</div>
     </div>`,
 
-  'card-cpu': () => `
+    'card-cpu': () => `
     <div class="card" id="card-cpu">
       <div class="card-header" style="justify-content:space-between">
         <div style="display:flex;align-items:center;gap:6px">
@@ -83,11 +99,17 @@ const CARD_TEMPLATES = {
           Benchmark
         </button>
       </div>
-      <div class="value" id="cpuVal" style="color:#60a5fa">—<span class="unit">%</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div class="value" id="cpuVal" style="color:#60a5fa">—<span class="unit">%</span></div>
+        <div id="cpuTempWrap" style="display:none;align-items:center;gap:4px">
+          <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">${t.temp}</span>
+          <span style="font-size:16px;font-weight:600;color:#fb923c" id="cpuTempVal">—<span class="unit">°C</span></span>
+        </div>
+      </div>
       <div class="bar-bg"><div class="bar" id="cpuBar" style="background:#3b82f6;width:0%"></div></div>
     </div>`,
 
-  'card-ram': () => `
+    'card-ram': () => `
     <div class="card" id="card-ram">
       <div class="card-header">
         <i data-lucide="memory-stick" style="width:13px;height:13px;color:var(--text-muted)"></i>
@@ -98,7 +120,7 @@ const CARD_TEMPLATES = {
       <div class="sub" id="ramSub">— / — GB</div>
     </div>`,
 
-  'card-gpu': () => `
+    'card-gpu': () => `
     <div class="card" id="card-gpu">
       <div class="card-header" style="justify-content:space-between">
         <div style="display:flex;align-items:center;gap:6px">
@@ -140,7 +162,7 @@ const CARD_TEMPLATES = {
       </div>
     </div>`,
 
-  'card-proc': () => `
+    'card-proc': () => `
     <div class="card" id="card-proc">
       <div class="card-header">
         <i data-lucide="layers" style="width:13px;height:13px;color:var(--text-muted)"></i>
@@ -152,7 +174,7 @@ const CARD_TEMPLATES = {
       </div>
     </div>`,
 
-  'card-screen': () => `
+    'card-screen': () => `
     <div class="card" id="card-screen">
       <div class="card-header" style="justify-content:space-between">
         <div style="display:flex;align-items:center;gap:6px">
@@ -168,7 +190,7 @@ const CARD_TEMPLATES = {
       </div>
     </div>`,
 
-  'card-disk': () => `
+    'card-disk': () => `
     <div class="card" id="card-disk">
       <div class="card-header">
         <i data-lucide="hard-drive" style="width:13px;height:13px;color:var(--text-muted)"></i>
@@ -179,7 +201,7 @@ const CARD_TEMPLATES = {
       <div class="sub" id="diskFree">${t.diskFree('—')}</div>
     </div>`,
 
-  'card-net': () => `
+    'card-net': () => `
     <div class="card" id="card-net">
       <div class="card-header">
         <i data-lucide="wifi" style="width:13px;height:13px;color:var(--text-muted)"></i>
@@ -199,395 +221,270 @@ const CARD_TEMPLATES = {
           <div class="net-val" id="ulVal" style="color:#60a5fa">— MB/s</div>
         </div>
       </div>
-    </div>`,
-
-  'card-weather': () => `
-    <div class="card" id="card-weather" style="position:relative">
-      <div class="card-header" style="justify-content:space-between">
-        <div style="display:flex;align-items:center;gap:6px">
-          <i data-lucide="map-pin" style="width:13px;height:13px;color:var(--text-muted)"></i>
-          <span class="label">${t.weather} — <span id="cityName">—</span></span>
-        </div>
-        <button id="editCityBtn" style="background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;">
-          <i data-lucide="pencil" style="width:12px;height:12px;color:var(--text-muted)"></i>
-        </button>
-      </div>
-      <div id="cityForm" style="display:none;margin-bottom:10px;position:relative">
-        <div style="position:relative">
-          <i data-lucide="search" style="width:12px;height:12px;color:var(--text-muted);position:absolute;left:9px;top:50%;transform:translateY(-50%);pointer-events:none"></i>
-          <input id="cityInput" type="text" placeholder="${t.citySearch}"
-            style="width:100%;background:var(--bg-input);border:1px solid var(--border-input);border-radius:8px;padding:6px 10px 6px 28px;color:var(--text-primary);font-size:13px;outline:none;" />
-        </div>
-        <div id="cityDropdown" style="display:none;position:absolute;left:0;right:0;top:38px;background:var(--bg-card);border:1px solid var(--border-input);border-radius:10px;overflow:hidden;z-index:999;max-height:160px;overflow-y:auto"></div>
-      </div>
-      <div id="weatherEmpty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px 0;gap:8px">
-        <i data-lucide="map-pin-off" style="width:28px;height:28px;color:#3d4460"></i>
-        <div style="font-size:13px;color:var(--text-muted);text-align:center">${t.weatherEmpty.split('\n').join('<br>')}</div>
-        <button id="selectCityBtn" style="margin-top:4px;background:var(--bg-input);border:1px solid var(--border-input);border-radius:8px;padding:6px 16px;color:var(--text-secondary);font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px">
-          <i data-lucide="search" style="width:12px;height:12px"></i>${t.selectCity}
-        </button>
-      </div>
-      <div id="weatherData" style="display:none">
-        <div class="weather-row">
-          <div class="weather-icon" id="weatherIcon">
-            <i data-lucide="cloud" style="width:26px;height:26px;color:#94a3b8"></i>
-          </div>
-          <div class="weather-info">
-            <div style="font-size:28px;font-weight:600;color:#fbbf24;line-height:1" id="weatherTemp">—<span class="unit">°C</span></div>
-            <div style="font-size:13px;color:var(--text-primary);margin-top:2px" id="weatherDesc">—</div>
-            <div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px;margin-top:2px">
-              <i data-lucide="droplets" style="width:11px;height:11px"></i>
-              <span id="weatherHumidity">—</span>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>`
-}
+  }
 
-// ── Layout render ───────────────────────────────────────────────
-function renderLayout(layout, visible) {
-  currentLayout = layout
-  currentVisible = visible
-  const content = document.getElementById('content')
-  content.innerHTML = ''
-  layout.forEach(item => {
-    if (item.type === 'single') {
-      if (!visible.includes(item.id)) return
-      const tpl = CARD_TEMPLATES[item.id]
-      if (tpl) content.insertAdjacentHTML('beforeend', tpl())
-    } else if (item.type === 'group') {
-      const visibleChildren = item.children.filter(c => visible.includes(c))
-      if (visibleChildren.length === 0) return
-      if (visibleChildren.length === 1) {
-        const tpl = CARD_TEMPLATES[visibleChildren[0]]
+  // ── Layout render ───────────────────────────────────────────────
+  function renderLayout(layout, visible) {
+    currentLayout = layout
+    currentVisible = visible
+    prevPayload = {} // structural change invalidates diff cache
+    const content = elById('content')
+    if (!content) return
+    content.innerHTML = ''
+    layout.forEach(item => {
+      if (item.type === 'single') {
+        if (!visible.includes(item.id)) return
+        const tpl = CARD_TEMPLATES[item.id]
         if (tpl) content.insertAdjacentHTML('beforeend', tpl())
-      } else {
-        const group = document.createElement('div')
-        group.className = 'card-group'
-        group.id = item.id
-        group.style.overflow = 'hidden'
-        visibleChildren.forEach(c => {
-          const tpl = CARD_TEMPLATES[c]
-          if (tpl) group.insertAdjacentHTML('beforeend', tpl())
-        })
-        content.appendChild(group)
+      } else if (item.type === 'group' && Array.isArray(item.children)) {
+        const visibleChildren = item.children.filter(c => visible.includes(c))
+        if (visibleChildren.length === 0) return
+        if (visibleChildren.length === 1) {
+          const tpl = CARD_TEMPLATES[visibleChildren[0]]
+          if (tpl) content.insertAdjacentHTML('beforeend', tpl())
+        } else {
+          const group = document.createElement('div')
+          group.className = 'card-group'
+          group.id = item.id
+          group.style.overflow = 'hidden'
+          visibleChildren.forEach(c => {
+            const tpl = CARD_TEMPLATES[c]
+            if (tpl) group.insertAdjacentHTML('beforeend', tpl())
+          })
+          content.appendChild(group)
+        }
+      }
+    })
+    // single createIcons after all structural changes
+    lucide.createIcons()
+    initSelectListeners()
+    setTimeout(() => api.send('set-window-height', calcHeight(layout, visible)), 50)
+  }
+
+  // ── Saat ────────────────────────────────────────────────────────
+  function updateClock() {
+    const el = elById('clock')
+    const dateEl = elById('dateStr')
+    if (!el) return
+    const now = new Date()
+    const locale = currentLang === 'tr' ? 'tr-TR' : 'en-US'
+    const time = now.toLocaleTimeString(locale)
+    if (el.textContent !== time) el.textContent = time
+    const date = now.toLocaleDateString(locale, {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    })
+    if (dateEl && dateEl.textContent !== date) dateEl.textContent = date
+  }
+  setInterval(updateClock, 1000)
+
+  // ── Sistem (push modeli, diffed render via rAF) ─────────────────
+  let prevPayload = {}
+  let pendingPayload = null
+  let rafScheduled = false
+
+  function applySystemUpdate(d, prev) {
+    // CPU
+    if (d.cpu !== prev.cpu) {
+      setHTML('cpuVal', `${d.cpu}<span class="unit">%</span>`)
+      setStyle('cpuBar', 'width', `${d.cpu}%`)
+    }
+    if (d.cpuTemp !== prev.cpuTemp) {
+      const hasTemp = d.cpuTemp !== null && d.cpuTemp !== undefined
+      // Hide the temperature entirely when there's no sensor reading (common on
+      // Windows) so the CPU card isn't cluttered with a dangling "—°C".
+      setStyle('cpuTempWrap', 'display', hasTemp ? 'flex' : 'none')
+      if (hasTemp) setHTML('cpuTempVal', `${d.cpuTemp}<span class="unit">°C</span>`)
+    }
+    // RAM
+    const pr = prev.ram || {}
+    if (!pr || d.ram.used !== pr.used) setHTML('ramVal', `${d.ram.used}<span class="unit">GB</span>`)
+    if (!pr || d.ram.percent !== pr.percent) setStyle('ramBar', 'width', `${d.ram.percent}%`)
+    if (!pr || d.ram.used !== pr.used || d.ram.total !== pr.total) setText('ramSub', `${d.ram.used} / ${d.ram.total} GB`)
+
+    // GPU
+    const pg = prev.gpu || null
+    if (d.gpu) {
+      if (!pg || d.gpu.name !== pg.name) setText('gpuName', d.gpu.name)
+      if (!pg || d.gpu.load !== pg.load) {
+        if (d.gpu.load !== null) {
+          setHTML('gpuLoad', `${d.gpu.load}<span class="unit">%</span>`)
+          setStyle('gpuBar', 'width', `${d.gpu.load}%`)
+        } else {
+          setHTML('gpuLoad', `—<span class="unit">%</span>`)
+          setStyle('gpuBar', 'width', '0%')
+        }
+      }
+      if (!pg || d.gpu.temp !== pg.temp) {
+        setHTML('gpuTemp', d.gpu.temp !== null ? `${d.gpu.temp}<span class="unit">°C</span>` : `—<span class="unit">°C</span>`)
+      }
+      if (!pg || d.gpu.memLoad !== pg.memLoad) {
+        if (d.gpu.memLoad !== null) {
+          setHTML('gpuMemLoad', `${d.gpu.memLoad}<span class="unit">%</span>`)
+          setStyle('gpuMemBar', 'width', `${d.gpu.memLoad}%`)
+        } else {
+          setHTML('gpuMemLoad', `—<span class="unit">%</span>`)
+          setStyle('gpuMemBar', 'width', '0%')
+        }
+      }
+      if (!pg || d.gpu.power !== pg.power) {
+        setHTML('gpuPower', d.gpu.power !== null ? `${d.gpu.power.toFixed(1)}<span class="unit">W</span>` : `—<span class="unit">W</span>`)
+      }
+      if (!pg || d.gpu.vramUsed !== pg.vramUsed || d.gpu.vram !== pg.vram) {
+        setText('gpuVramUsed', (d.gpu.vramUsed !== null && d.gpu.vram !== null) ? `${d.gpu.vramUsed} / ${d.gpu.vram} MB` : '— / — MB')
       }
     }
+
+    // Processes
+    const pp = prev.processes || {}
+    if (!pp || d.processes.all !== pp.all) setText('procAll', d.processes.all)
+    setText('procUnit', t.processUnit)
+
+    // Disk
+    const pd = prev.disk || {}
+    if (!pd || d.disk.percent !== pd.percent) {
+      setHTML('diskVal', `${d.disk.percent}<span class="unit">%</span>`)
+      setStyle('diskBar', 'width', `${d.disk.percent}%`)
+    }
+    if (!pd || d.disk.free !== pd.free) setText('diskFree', t.diskFree(d.disk.free))
+
+    // Display
+    if (d.display) {
+      const pdp = prev.display || {}
+      if (!pdp || d.display.width !== pdp.width || d.display.height !== pdp.height) setText('displayRes', `${d.display.width} × ${d.display.height}`)
+      if (!pdp || d.display.hz !== pdp.hz) setText('displayHz', `${d.display.hz} Hz`)
+    }
+
+    // Uptime
+    if (d.uptime !== prev.uptime) setText('uptime', d.uptime)
+
+    // Net
+    const pn = prev.net || {}
+    if (!pn || d.net.download !== pn.download) setText('dlVal', `${d.net.download} MB/s`)
+    if (!pn || d.net.upload !== pn.upload) setText('ulVal', `${d.net.upload} MB/s`)
+  }
+
+  api.on('system-update', (d) => {
+    pendingPayload = d
+    if (rafScheduled) return
+    rafScheduled = true
+    requestAnimationFrame(() => {
+      rafScheduled = false
+      const next = pendingPayload
+      pendingPayload = null
+      if (!next) return
+      applySystemUpdate(next, prevPayload)
+      prevPayload = next
+    })
   })
-  lucide.createIcons()
-  initWeatherListeners()
-  initSelectListeners()
-  initBenchmarkListeners()
-  setTimeout(() => ipcRenderer.send('set-window-height', calcHeight(layout, visible)), 50)
-}
 
-// ── Saat ────────────────────────────────────────────────────────
-function updateClock() {
-  const el = document.getElementById('clock')
-  const dateEl = document.getElementById('dateStr')
-  if (!el) return
-  const now = new Date()
-  const locale = currentLang === 'tr' ? 'tr-TR' : 'en-US'
-  el.textContent = now.toLocaleTimeString(locale)
-  dateEl.textContent = now.toLocaleDateString(locale, {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-  })
-}
-setInterval(updateClock, 1000)
-
-// ── Sistem (push modeli) ────────────────────────────────────────
-ipcRenderer.on('system-update', (_, d) => {
-  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html }
-  const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt }
-  const setStyle = (id, prop, val) => { const el = document.getElementById(id); if (el) el.style[prop] = val }
-
-  set('cpuVal', `${d.cpu}<span class="unit">%</span>`)
-  setStyle('cpuBar', 'width', `${d.cpu}%`)
-  set('ramVal', `${d.ram.used}<span class="unit">GB</span>`)
-  setStyle('ramBar', 'width', `${d.ram.percent}%`)
-  setText('ramSub', `${d.ram.used} / ${d.ram.total} GB`)
-
-  if (d.gpu) {
-    setText('gpuName', d.gpu.name)
-    if (d.gpu.load !== null) {
-      set('gpuLoad', `${d.gpu.load}<span class="unit">%</span>`)
-      setStyle('gpuBar', 'width', `${d.gpu.load}%`)
-    } else {
-      set('gpuLoad', `—<span class="unit">%</span>`)
-      setStyle('gpuBar', 'width', '0%')
+  // ── Select listeners ─────────────────────────────────────────────
+  async function initSelectListeners() {
+    const gpuSelect = elById('gpuSelect')
+    const displaySelect = elById('displaySelect')
+    if (gpuSelect && !gpuSelect.dataset.wired) {
+      const [gpus, selectedGpu] = await Promise.all([
+        api.invoke('get-gpu-list'),
+        api.invoke('get-selected-gpu')
+      ])
+      gpuSelect.innerHTML = gpus.map(g =>
+        `<option value="${g.index}" ${g.index === selectedGpu ? 'selected' : ''}>${g.name.slice(0, 18)}</option>`
+      ).join('')
+      gpuSelect.addEventListener('change', (e) => {
+        api.send('set-selected-gpu', parseInt(e.target.value, 10))
+      })
+      gpuSelect.dataset.wired = '1'
     }
-    if (d.gpu.temp !== null) {
-      set('gpuTemp', `${d.gpu.temp}<span class="unit">°C</span>`)
-    } else {
-      set('gpuTemp', `—<span class="unit">°C</span>`)
-    }
-    if (d.gpu.memLoad !== null) {
-      set('gpuMemLoad', `${d.gpu.memLoad}<span class="unit">%</span>`)
-      setStyle('gpuMemBar', 'width', `${d.gpu.memLoad}%`)
-    } else {
-      set('gpuMemLoad', `—<span class="unit">%</span>`)
-      setStyle('gpuMemBar', 'width', '0%')
-    }
-    if (d.gpu.power !== null) {
-      set('gpuPower', `${d.gpu.power.toFixed(1)}<span class="unit">W</span>`)
-    } else {
-      set('gpuPower', `—<span class="unit">W</span>`)
-    }
-    if (d.gpu.vramUsed !== null && d.gpu.vram !== null) {
-      setText('gpuVramUsed', `${d.gpu.vramUsed} / ${d.gpu.vram} MB`)
-    } else {
-      setText('gpuVramUsed', '— / — MB')
+    if (displaySelect && !displaySelect.dataset.wired) {
+      const [displays, selectedDisplay] = await Promise.all([
+        api.invoke('get-display-list'),
+        api.invoke('get-selected-display')
+      ])
+      displaySelect.innerHTML = displays.map(dd =>
+        `<option value="${dd.index}" ${dd.index === selectedDisplay ? 'selected' : ''}>${dd.name.slice(0, 16)}</option>`
+      ).join('')
+      displaySelect.addEventListener('change', (e) => {
+        api.send('set-selected-display', parseInt(e.target.value, 10))
+      })
+      displaySelect.dataset.wired = '1'
     }
   }
 
-  setText('procAll', d.processes.all)
-  setText('procUnit', t.processUnit)
-  set('diskVal', `${d.disk.percent}<span class="unit">%</span>`)
-  setStyle('diskBar', 'width', `${d.disk.percent}%`)
-  setText('diskFree', t.diskFree(d.disk.free))
-  if (d.display) {
-    setText('displayRes', `${d.display.width} × ${d.display.height}`)
-    setText('displayHz', `${d.display.hz} Hz`)
-  }
-  setText('uptime', d.uptime)
-  setText('dlVal', `${d.net.download} MB/s`)
-  setText('ulVal', `${d.net.upload} MB/s`)
-})
-
-// ── Select listeners ─────────────────────────────────────────────
-async function initSelectListeners() {
-  const gpuSelect = document.getElementById('gpuSelect')
-  const displaySelect = document.getElementById('displaySelect')
-  if (gpuSelect) {
-    const [gpus, selectedGpu] = await Promise.all([
-      ipcRenderer.invoke('get-gpu-list'),
-      ipcRenderer.invoke('get-selected-gpu')
-    ])
-    gpuSelect.innerHTML = gpus.map(g =>
-      `<option value="${g.index}" ${g.index === selectedGpu ? 'selected' : ''}>${g.name.slice(0, 18)}</option>`
-    ).join('')
-    gpuSelect.addEventListener('change', (e) => {
-      ipcRenderer.send('set-selected-gpu', parseInt(e.target.value))
-    })
-  }
-  if (displaySelect) {
-    const [displays, selectedDisplay] = await Promise.all([
-      ipcRenderer.invoke('get-display-list'),
-      ipcRenderer.invoke('get-selected-display')
-    ])
-    displaySelect.innerHTML = displays.map(d =>
-      `<option value="${d.index}" ${d.index === selectedDisplay ? 'selected' : ''}>${d.name.slice(0, 16)}</option>`
-    ).join('')
-    displaySelect.addEventListener('change', (e) => {
-      ipcRenderer.send('set-selected-display', parseInt(e.target.value))
-    })
-  }
-}
-
-// ── Benchmark listeners ──────────────────────────────────────────
-function initBenchmarkListeners() {
-  const cpuBtn = document.getElementById('cpuBenchBtn')
-  const gpuBtn = document.getElementById('gpuBenchBtn')
-  if (cpuBtn) cpuBtn.addEventListener('click', () => ipcRenderer.send('open-benchmark'))
-  if (gpuBtn) gpuBtn.addEventListener('click', () => ipcRenderer.send('open-benchmark'))
-}
-
-// ── Hava Durumu ─────────────────────────────────────────────────
-const weatherIconMap = {
-  'Clear':           { icon: 'sun',            color: '#fbbf24' },
-  'Mostly clear':    { icon: 'cloud-sun',       color: '#fbbf24' },
-  'Partly cloudy':   { icon: 'cloud-sun',       color: '#94a3b8' },
-  'Cloudy':          { icon: 'cloud',           color: '#94a3b8' },
-  'Foggy':           { icon: 'wind',            color: '#94a3b8' },
-  'Drizzle':         { icon: 'cloud-drizzle',   color: '#60a5fa' },
-  'Rainy':           { icon: 'cloud-rain',      color: '#60a5fa' },
-  'Snowy':           { icon: 'cloud-snow',      color: '#e2e8f0' },
-  'Showers':         { icon: 'cloud-rain',      color: '#3b82f6' },
-  'Thunderstorm':    { icon: 'cloud-lightning', color: '#f59e0b' },
-  'Açık':            { icon: 'sun',            color: '#fbbf24' },
-  'Az bulutlu':      { icon: 'cloud-sun',       color: '#fbbf24' },
-  'Parçalı bulutlu': { icon: 'cloud-sun',       color: '#94a3b8' },
-  'Bulutlu':         { icon: 'cloud',           color: '#94a3b8' },
-  'Sisli':           { icon: 'wind',            color: '#94a3b8' },
-  'Çisenti':         { icon: 'cloud-drizzle',   color: '#60a5fa' },
-  'Yağmurlu':        { icon: 'cloud-rain',      color: '#60a5fa' },
-  'Karlı':           { icon: 'cloud-snow',      color: '#e2e8f0' },
-  'Sağanak':         { icon: 'cloud-rain',      color: '#3b82f6' },
-  'Fırtına':         { icon: 'cloud-lightning', color: '#f59e0b' },
-}
-
-async function updateWeather() {
-  const city = await ipcRenderer.invoke('get-city')
-  if (!city) return
-  const w = await ipcRenderer.invoke('get-weather')
-  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html }
-  const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt }
-  const empty = document.getElementById('weatherEmpty')
-  const data = document.getElementById('weatherData')
-  if (empty) empty.style.display = 'none'
-  if (data) data.style.display = 'block'
-  setText('cityName', w.city)
-  set('weatherTemp', `${w.temp}<span class="unit">°C</span>`)
-  setText('weatherDesc', w.desc)
-  setText('weatherHumidity', t.humidity(w.humidity))
-  const match = weatherIconMap[w.desc] || { icon: 'cloud', color: '#94a3b8' }
-  set('weatherIcon', `<i data-lucide="${match.icon}" style="width:26px;height:26px;color:${match.color}"></i>`)
-  lucide.createIcons()
-}
-
-async function initWeather() {
-  const city = await ipcRenderer.invoke('get-city')
-  if (!city) {
-    const empty = document.getElementById('weatherEmpty')
-    const data = document.getElementById('weatherData')
-    if (empty) empty.style.display = 'flex'
-    if (data) data.style.display = 'none'
-  } else {
-    updateWeather()
-  }
-}
-setInterval(updateWeather, 10 * 60 * 1000)
-
-function initWeatherListeners() {
-  const editBtn = document.getElementById('editCityBtn')
-  const selectBtn = document.getElementById('selectCityBtn')
-  const cityInput = document.getElementById('cityInput')
-  if (editBtn) {
-    editBtn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      const form = document.getElementById('cityForm')
-      const isVisible = form.style.display !== 'none'
-      form.style.display = isVisible ? 'none' : 'block'
-      document.getElementById('cityDropdown').style.display = 'none'
-      if (!isVisible) { cityInput.value = ''; setTimeout(() => cityInput.focus(), 50) }
-    })
-  }
-  if (selectBtn) {
-    selectBtn.addEventListener('click', () => {
-      document.getElementById('cityForm').style.display = 'block'
-      cityInput.focus()
-    })
-  }
-  if (cityInput) {
-    let searchTimeout
-    cityInput.addEventListener('input', async (e) => {
-      const query = e.target.value.trim()
-      const dropdown = document.getElementById('cityDropdown')
-      if (query.length < 2) { dropdown.style.display = 'none'; return }
-      clearTimeout(searchTimeout)
-      searchTimeout = setTimeout(async () => {
-        try {
-          const res = await fetch(
-            `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=tr`
-          )
-          const data = await res.json()
-          const results = data.results || []
-          if (results.length === 0) {
-            dropdown.innerHTML = `<div style="padding:12px 14px;font-size:13px;color:var(--text-muted);text-align:center">${t.cityNotFound}</div>`
-            dropdown.style.display = 'block'
-            return
-          }
-          dropdown.innerHTML = results.map((r, i) => `
-            <div class="city-result" data-name="${r.name}"
-              style="padding:10px 14px;cursor:pointer;border-bottom:${i < results.length - 1 ? '1px solid var(--border)' : 'none'};display:flex;justify-content:space-between;align-items:center;">
-              <div>
-                <div style="font-size:13px;color:var(--text-primary);font-weight:500">${r.name}</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:1px">${[r.admin1, r.country].filter(Boolean).join(', ')}</div>
-              </div>
-              <i data-lucide="map-pin" style="width:11px;height:11px;color:var(--text-muted);flex-shrink:0"></i>
-            </div>
-          `).join('')
-          dropdown.style.display = 'block'
-          lucide.createIcons()
-          dropdown.querySelectorAll('.city-result').forEach(el => {
-            el.addEventListener('mouseenter', () => el.style.background = 'var(--bg-input)')
-            el.addEventListener('mouseleave', () => el.style.background = 'none')
-            el.addEventListener('click', () => {
-              ipcRenderer.send('set-city', el.dataset.name)
-              cityInput.value = ''
-              dropdown.style.display = 'none'
-              document.getElementById('cityForm').style.display = 'none'
-              updateWeather()
-            })
-          })
-        } catch { dropdown.style.display = 'none' }
-      }, 350)
-    })
-  }
+  // ── Event delegation: benchmark buttons ─────────────────────────
   document.addEventListener('click', (e) => {
-    const form = document.getElementById('cityForm')
-    const dropdown = document.getElementById('cityDropdown')
-    if (form && !form.contains(e.target) && e.target.id !== 'editCityBtn' && e.target.id !== 'selectCityBtn') {
-      form.style.display = 'none'
-      if (dropdown) dropdown.style.display = 'none'
+    const target = e.target
+    const cpuBench = target.closest && target.closest('#cpuBenchBtn')
+    const gpuBench = target.closest && target.closest('#gpuBenchBtn')
+    if (cpuBench || gpuBench) {
+      api.send('open-benchmark')
     }
   })
-}
 
-// ── Tema ────────────────────────────────────────────────────────
-function applyTheme(theme) {
-  document.body.classList.toggle('light', theme === 'light')
-  document.getElementById('themeIcon').setAttribute('data-lucide', theme === 'light' ? 'moon' : 'sun')
-  lucide.createIcons()
-}
+  // ── Tema ────────────────────────────────────────────────────────
+  function applyTheme(theme) {
+    document.body.classList.toggle('light', theme === 'light')
+    const ti = elById('themeIcon')
+    if (ti) {
+      ti.setAttribute('data-lucide', theme === 'light' ? 'moon' : 'sun')
+      lucide.createIcons()
+    }
+  }
 
-async function initTheme() {
-  const theme = await ipcRenderer.invoke('get-theme')
-  applyTheme(theme)
-}
+  async function initTheme() {
+    const theme = await api.invoke('get-theme')
+    applyTheme(theme)
+  }
 
-document.getElementById('themeBtn').addEventListener('click', (e) => {
-  e.stopPropagation()
-  const current = document.body.classList.contains('light') ? 'light' : 'dark'
-  const next = current === 'light' ? 'dark' : 'light'
-  ipcRenderer.send('set-theme', next)
-  applyTheme(next)
-})
+  document.getElementById('themeBtn').addEventListener('click', (e) => {
+    e.stopPropagation()
+    const current = document.body.classList.contains('light') ? 'light' : 'dark'
+    const next = current === 'light' ? 'dark' : 'light'
+    api.send('set-theme', next)
+    applyTheme(next)
+  })
 
-ipcRenderer.on('theme-changed', (_, theme) => applyTheme(theme))
+  api.on('theme-changed', (theme) => applyTheme(theme))
 
-// ── Layout güncellemeleri ────────────────────────────────────────
-ipcRenderer.on('layout-updated', (_, layout) => {
-  ipcRenderer.invoke('get-visible').then(visible => {
+  // ── Layout güncellemeleri ────────────────────────────────────────
+  api.on('layout-updated', (layout) => {
+    api.invoke('get-visible').then(visible => {
+      renderLayout(layout, visible)
+      updateClock()
+    })
+  })
+
+  api.on('visible-updated', (visible) => {
+    api.invoke('get-layout').then(layout => {
+      renderLayout(layout, visible)
+      updateClock()
+    })
+  })
+
+  // ── Başlat ──────────────────────────────────────────────────────
+  async function init() {
+    await initTheme()
+    await initLang()
+    const [layout, visible] = await Promise.all([
+      api.invoke('get-layout'),
+      api.invoke('get-visible')
+    ])
     renderLayout(layout, visible)
     updateClock()
-    initWeather()
+  }
+  init()
+
+  document.getElementById('settingsBtn').addEventListener('click', (e) => {
+    e.stopPropagation()
+    api.send('open-settings')
   })
-})
 
-ipcRenderer.on('visible-updated', (_, visible) => {
-  ipcRenderer.invoke('get-layout').then(layout => {
-    renderLayout(layout, visible)
-    updateClock()
-    initWeather()
+  document.getElementById('editorBtn').addEventListener('click', (e) => {
+    e.stopPropagation()
+    api.send('open-editor')
   })
-})
 
-// ── Başlat ──────────────────────────────────────────────────────
-async function init() {
-  await initTheme()
-  await initLang()
-  const [layout, visible] = await Promise.all([
-    ipcRenderer.invoke('get-layout'),
-    ipcRenderer.invoke('get-visible')
-  ])
-  renderLayout(layout, visible)
-  updateClock()
-  initWeather()
-}
-init()
+  document.getElementById('closeBtn').addEventListener('click', () => {
+    api.send('hide-app')
+  })
 
-document.getElementById('settingsBtn').addEventListener('click', (e) => {
-  e.stopPropagation()
-  ipcRenderer.send('open-settings')
-})
-
-document.getElementById('editorBtn').addEventListener('click', (e) => {
-  e.stopPropagation()
-  ipcRenderer.send('open-editor')
-})
-
-document.getElementById('closeBtn').addEventListener('click', () => {
-  ipcRenderer.send('hide-app')
-})
+})()

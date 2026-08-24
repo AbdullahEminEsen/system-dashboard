@@ -3,8 +3,9 @@
 
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:;" />
   <title>System Dashboard</title>
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="vendor/lucide.min.js"></script>
   <style>
     :root {
       --bg-primary: #0f1117;
@@ -195,30 +196,6 @@
       font-weight: 500;
     }
 
-    .weather-row {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      margin-top: 4px;
-    }
-
-    .weather-icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 48px;
-      height: 48px;
-      border-radius: 10px;
-      background: var(--bg-input);
-      flex-shrink: 0;
-    }
-
-    .weather-info {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
     .card-group .card {
       width: 100%;
       min-width: 0;
@@ -255,6 +232,7 @@
   </div>
 
   <script>lucide.createIcons()</script>
+  <script src="i18n.js"></script>
   <script src="renderer.js"></script>
 </body>
 

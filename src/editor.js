@@ -1,17 +1,24 @@
-const { ipcRenderer } = require('electron')
-
-const i18n = require('./i18n')
+// editor.js — runs under contextIsolation:true.
+// IPC via window.api, i18n via window.i18n.
+// Wrapped in an IIFE so top-level bindings (api, t, layout, …) stay private to
+// this script and can't collide with another script sharing the page's global
+// scope. Without it, `const api` collided with an existing global `api`, throwing
+// "Identifier 'api' has already been declared" at parse time — which is why the
+// whole file never ran and the editor came up completely blank.
+;(() => {
+const api = window.api
+const i18nRef = window.i18n
 let currentLang = 'tr'
-let t = i18n[currentLang]
+let t = i18nRef[currentLang]
 
 async function initLang() {
-  currentLang = await ipcRenderer.invoke('get-lang')
-  t = i18n[currentLang]
+  currentLang = await api.invoke('get-lang')
+  t = i18nRef[currentLang]
 }
 
-ipcRenderer.on('lang-changed', (_, lang) => {
+api.on('lang-changed', (lang) => {
   currentLang = lang
-  t = i18n[lang]
+  t = i18nRef[lang]
   updateEditorUI()
   renderSlotList()
   renderHiddenPool()
@@ -27,7 +34,6 @@ function getCardDefs() {
     'card-screen': { label: t.screen, icon: 'monitor', single: false },
     'card-disk': { label: t.disk, icon: 'hard-drive', single: true },
     'card-net': { label: t.net, icon: 'wifi', single: true },
-    'card-weather': { label: t.weather, icon: 'map-pin', single: true },
   }
 }
 
@@ -37,8 +43,9 @@ let groupingCardId = null
 function getAllVisible() {
   const ids = []
   layout.forEach(slot => {
+    if (!slot || typeof slot !== 'object') return
     if (slot.type === 'single') ids.push(slot.id)
-    else slot.children.forEach(c => ids.push(c))
+    else if (Array.isArray(slot.children)) slot.children.forEach(c => ids.push(c))
   })
   return ids
 }
@@ -50,8 +57,8 @@ function getHidden() {
 }
 
 function saveAndSync() {
-  ipcRenderer.send('set-layout', layout)
-  ipcRenderer.send('set-visible', getAllVisible())
+  api.send('set-layout', layout)
+  api.send('set-visible', getAllVisible())
 }
 
 function groupCards(sourceId, targetId) {
@@ -97,8 +104,15 @@ function renderSlotList() {
   list.innerHTML = ''
 
   layout.forEach((slot, slotIdx) => {
+    // Guard against malformed slots. Anything that isn't a valid single or a
+    // group with a real children array is skipped rather than crashing the whole
+    // render (which previously left the editor completely blank).
+    if (!slot || typeof slot !== 'object') return
+    const isGroup = slot.type === 'group' && Array.isArray(slot.children)
+    if (slot.type !== 'single' && !isGroup) return
+
     const el = document.createElement('div')
-    el.className = `slot${slot.type === 'group' ? ' group' : ''}`
+    el.className = `slot${isGroup ? ' group' : ''}`
     el.dataset.idx = slotIdx
 
     if (slot.type === 'single') {
@@ -121,7 +135,7 @@ function renderSlotList() {
                  </button>`
           : isGroupingTarget
             ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.id}" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
-                     ${currentLang === 'tr' ? 'Grupla' : 'Group'}
+                     ${t.groupAction}
                    </button>`
             : `<button class="icon-btn group-btn" data-id="${slot.id}">
                      <i data-lucide="layout-panel-left" style="width:13px;height:13px"></i>
@@ -160,7 +174,7 @@ function renderSlotList() {
           <div class="slot-actions">
             ${canMerge
           ? `<button class="icon-btn merge-btn" data-source="${groupingCardId}" data-target="${slot.children[0]}" style="color:#3b82f6;border:1px solid #3b82f6;border-radius:6px;padding:2px 8px;font-size:11px">
-                   ${currentLang === 'tr' ? 'Ekle' : 'Add'}
+                   ${t.addToGroup}
                  </button>`
           : `<button class="icon-btn danger hide-btn" data-idx="${slotIdx}">
                    <i data-lucide="eye-off" style="width:13px;height:13px"></i>
@@ -174,7 +188,7 @@ function renderSlotList() {
     list.appendChild(el)
   })
 
-  // Gruplama banner'ı
+  // Gruplama banner
   const hint = document.getElementById('groupHint')
   if (groupingCardId) {
     if (!hint) {
@@ -182,9 +196,8 @@ function renderSlotList() {
       const banner = document.createElement('div')
       banner.id = 'groupHint'
       banner.style.cssText = 'background:#1e3a5f;border:1px solid #3b82f6;border-radius:8px;padding:8px 12px;font-size:12px;color:#60a5fa;text-align:center;margin-top:4px'
-      banner.textContent = currentLang === 'tr'
-        ? `"${CARD_DEFS[groupingCardId]?.label}" ile gruplamak istediğin karta tıkla`
-        : `Select a card to group with "${CARD_DEFS[groupingCardId]?.label}"`
+      const label = CARD_DEFS[groupingCardId]?.label || ''
+      banner.textContent = t.groupHint(label)
       document.getElementById('slotList').after(banner)
     }
   } else {
@@ -194,7 +207,6 @@ function renderSlotList() {
   lucide.createIcons()
   initSlotSortable()
   initChildSortables()
-  bindSlotActions()
 }
 
 function renderHiddenPool() {
@@ -218,15 +230,6 @@ function renderHiddenPool() {
       </div>`
   }).join('')
   lucide.createIcons()
-
-  pool.querySelectorAll('.add-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      layout.push({ id: btn.dataset.id, type: 'single' })
-      saveAndSync()
-      renderSlotList()
-      renderHiddenPool()
-    })
-  })
 }
 
 function initSlotSortable() {
@@ -246,30 +249,40 @@ function initSlotSortable() {
 
 function initChildSortables() {
   document.querySelectorAll('[id^="children-"]').forEach(container => {
-    const slotIdx = parseInt(container.id.split('-')[1])
     Sortable.create(container, {
       animation: 150,
       ghostClass: 'sortable-ghost',
       group: 'children',
       onEnd: (evt) => {
-        const fromSlot = parseInt(evt.from.id.split('-')[1])
-        const toSlot = parseInt(evt.to.id.split('-')[1])
+        const fromSlot = parseInt(evt.from.id.split('-')[1], 10)
+        const toSlot = parseInt(evt.to.id.split('-')[1], 10)
         const movedId = evt.item.dataset.id
+        if (!layout[fromSlot] || layout[fromSlot].type !== 'group') return
 
-        layout[fromSlot].children.splice(evt.oldIndex, 1)
-
-        if (layout[fromSlot].children.length === 1) {
-          const remaining = layout[fromSlot].children[0]
-          layout[fromSlot] = { id: remaining, type: 'single' }
-        } else if (layout[fromSlot].children.length === 0) {
-          layout.splice(fromSlot, 1)
-        }
-
-        const adjustedTo = fromSlot < toSlot ? toSlot - 1 : toSlot
-        if (layout[adjustedTo] && layout[adjustedTo].type === 'group') {
-          layout[adjustedTo].children.splice(evt.newIndex, 0, movedId)
+        if (fromSlot === toSlot) {
+          // Reorder within the same group — move inside its children array.
+          // (The old code always ran the "collapse if length===1" branch here,
+          // which destroyed a two-card group whenever you reordered its cards.)
+          const children = layout[fromSlot].children
+          children.splice(evt.oldIndex, 1)
+          children.splice(evt.newIndex, 0, movedId)
         } else {
-          layout.splice(adjustedTo + 1, 0, { id: movedId, type: 'single' })
+          // Cross-group move. Grab the target group by reference *before*
+          // mutating the source, so collapsing/removing the source slot can't
+          // shift the target index out from under us (the old adjustedTo math
+          // assumed the source was always spliced out, which isn't true when it
+          // collapses to a single in place).
+          const targetGroup = layout[toSlot]
+          if (!targetGroup || targetGroup.type !== 'group') return
+          targetGroup.children.splice(evt.newIndex, 0, movedId)
+
+          const src = layout[fromSlot]
+          src.children.splice(evt.oldIndex, 1)
+          if (src.children.length === 1) {
+            layout[fromSlot] = { id: src.children[0], type: 'single' }
+          } else if (src.children.length === 0) {
+            layout.splice(fromSlot, 1)
+          }
         }
 
         saveAndSync()
@@ -280,59 +293,61 @@ function initChildSortables() {
   })
 }
 
-function bindSlotActions() {
-  document.querySelectorAll('.group-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      groupingCardId = btn.dataset.id
-      renderSlotList()
-    })
-  })
+// Single delegated click handler — survives re-renders without rebinding.
+document.addEventListener('click', (e) => {
+  const target = e.target
+  if (!target || !target.closest) return
 
-  document.querySelectorAll('.cancel-group-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      groupingCardId = null
-      renderSlotList()
-    })
-  })
+  const groupBtn = target.closest('.group-btn')
+  if (groupBtn) { groupingCardId = groupBtn.dataset.id; renderSlotList(); return }
 
-  document.querySelectorAll('.merge-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      groupCards(btn.dataset.source, btn.dataset.target)
-    })
-  })
+  const cancelBtn = target.closest('.cancel-group-btn')
+  if (cancelBtn) { groupingCardId = null; renderSlotList(); return }
 
-  document.querySelectorAll('.hide-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.idx)
-      layout.splice(idx, 1)
-      groupingCardId = null
-      saveAndSync()
-      renderSlotList()
-      renderHiddenPool()
-    })
-  })
+  const mergeBtn = target.closest('.merge-btn')
+  if (mergeBtn) { groupCards(mergeBtn.dataset.source, mergeBtn.dataset.target); return }
 
-  document.querySelectorAll('.ungroup-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const slotIdx = parseInt(btn.dataset.slot)
-      const cardId = btn.dataset.id
-      layout[slotIdx].children = layout[slotIdx].children.filter(c => c !== cardId)
-      if (layout[slotIdx].children.length === 1) {
-        const remaining = layout[slotIdx].children[0]
-        layout[slotIdx] = { id: remaining, type: 'single' }
-      } else if (layout[slotIdx].children.length === 0) {
-        layout.splice(slotIdx, 1)
-      }
-      layout.push({ id: cardId, type: 'single' })
-      groupingCardId = null
-      saveAndSync()
-      renderSlotList()
-      renderHiddenPool()
-    })
-  })
-}
+  const hideBtn = target.closest('.hide-btn')
+  if (hideBtn) {
+    const idx = parseInt(hideBtn.dataset.idx, 10)
+    layout.splice(idx, 1)
+    groupingCardId = null
+    saveAndSync()
+    renderSlotList()
+    renderHiddenPool()
+    return
+  }
 
-ipcRenderer.on('theme-changed', (_, theme) => {
+  const ungroupBtn = target.closest('.ungroup-btn')
+  if (ungroupBtn) {
+    const slotIdx = parseInt(ungroupBtn.dataset.slot, 10)
+    const cardId = ungroupBtn.dataset.id
+    layout[slotIdx].children = layout[slotIdx].children.filter(c => c !== cardId)
+    if (layout[slotIdx].children.length === 1) {
+      const remaining = layout[slotIdx].children[0]
+      layout[slotIdx] = { id: remaining, type: 'single' }
+    } else if (layout[slotIdx].children.length === 0) {
+      layout.splice(slotIdx, 1)
+    }
+    layout.push({ id: cardId, type: 'single' })
+    groupingCardId = null
+    saveAndSync()
+    renderSlotList()
+    renderHiddenPool()
+    return
+  }
+
+  const addBtn = target.closest('.add-btn')
+  if (addBtn) {
+    layout.push({ id: addBtn.dataset.id, type: 'single' })
+    saveAndSync()
+    renderSlotList()
+    renderHiddenPool()
+    return
+  }
+})
+
+api.on('theme-changed', (theme) => {
   document.body.classList.toggle('light', theme === 'light')
 })
 
@@ -347,9 +362,9 @@ function updateEditorUI() {
 
 async function init() {
   const [l, , theme] = await Promise.all([
-    ipcRenderer.invoke('get-layout'),
-    ipcRenderer.invoke('get-visible'),
-    ipcRenderer.invoke('get-theme')
+    api.invoke('get-layout'),
+    api.invoke('get-visible'),
+    api.invoke('get-theme')
   ])
   await initLang()
   layout = JSON.parse(JSON.stringify(l))
@@ -361,5 +376,7 @@ async function init() {
 init()
 
 document.getElementById('closeBtn').addEventListener('click', () => {
-  ipcRenderer.send('close-editor')
+  api.send('close-editor')
 })
+
+})()

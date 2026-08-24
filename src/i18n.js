@@ -1,3 +1,7 @@
+// Dual-mode: works as a CommonJS module in the main process AND as a plain
+// browser script in the renderer (where it sets `window.i18n`).
+// This avoids needing `require('./i18n')` in renderers under contextIsolation.
+
 const i18n = {
     tr: {
         // Titlebar
@@ -23,19 +27,6 @@ const i18n = {
         memUsage: 'Mem Usage',
         power: 'Power',
 
-        // Hava durumu
-        weather: 'Hava Durumu',
-        weatherEmpty: 'Hava durumu için\nbir şehir seçin',
-        selectCity: 'Şehir Seç',
-        citySearch: 'Şehir ara...',
-        cityNotFound: 'Şehir bulunamadı',
-        humidity: (n) => `Nem %${n}`,
-        weatherCodes: {
-            0: 'Açık', 1: 'Az bulutlu', 2: 'Parçalı bulutlu', 3: 'Bulutlu',
-            45: 'Sisli', 51: 'Çisenti', 61: 'Yağmurlu', 71: 'Karlı',
-            80: 'Sağanak', 95: 'Fırtına'
-        },
-
         // Settings
         settings: 'Ayarlar',
         appearance: 'Görünüm',
@@ -59,6 +50,9 @@ const i18n = {
         addCard: '+ Ekle',
         allVisible: 'Tüm kartlar görünüyor',
         group: (n) => `Grup (${n} kart)`,
+        groupAction: 'Grupla',
+        addToGroup: 'Ekle',
+        groupHint: (label) => `"${label}" ile gruplamak istediğin karta tıkla`,
 
         // Tray
         showHide: 'Göster / Gizle',
@@ -89,19 +83,6 @@ const i18n = {
         memUsage: 'Mem Usage',
         power: 'Power',
 
-        // Hava durumu
-        weather: 'Weather',
-        weatherEmpty: 'Select a city\nto see weather',
-        selectCity: 'Select City',
-        citySearch: 'Search city...',
-        cityNotFound: 'City not found',
-        humidity: (n) => `Humidity ${n}%`,
-        weatherCodes: {
-            0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Cloudy',
-            45: 'Foggy', 51: 'Drizzle', 61: 'Rainy', 71: 'Snowy',
-            80: 'Showers', 95: 'Thunderstorm'
-        },
-
         // Settings
         settings: 'Settings',
         appearance: 'Appearance',
@@ -125,6 +106,9 @@ const i18n = {
         addCard: '+ Add',
         allVisible: 'All cards are visible',
         group: (n) => `Group (${n} cards)`,
+        groupAction: 'Group',
+        addToGroup: 'Add',
+        groupHint: (label) => `Select a card to group with "${label}"`,
 
         // Tray
         showHide: 'Show / Hide',
@@ -132,4 +116,5 @@ const i18n = {
     }
 }
 
-module.exports = i18n
+if (typeof module !== 'undefined' && module.exports) module.exports = i18n
+if (typeof window !== 'undefined') window.i18n = i18n

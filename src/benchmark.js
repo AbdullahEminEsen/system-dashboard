@@ -1,9 +1,18 @@
-const { ipcRenderer, shell } = require('electron')
-const fs = require('fs')
-const path = require('path')
-const os = require('os')
+// benchmark.js — runs under contextIsolation:true.
+// IPC via window.api. File saves go through main via save-benchmark-report.
+// Wrapped in an IIFE so top-level bindings can't collide with another script in
+// the page's shared global scope (see the note in editor.js / renderer.js).
+;(() => {
+const api = window.api
 
 // ── State ────────────────────────────────────────────────────────
+const MAX_SAMPLES = 600 // hard cap to bound memory regardless of duration
+// Thermal safety cutoff: if either temperature reaches these, the test stops
+// itself. These sit just below where hardware starts throttling, so a healthy
+// machine never hits them — it's a safety net, not a normal stop condition.
+const SAFETY_CPU_TEMP = 95
+const SAFETY_GPU_TEMP = 90
+let safetyTripped = false
 let selectedType = 'both'
 let selectedLoad = 75
 let selectedDuration = 5 * 60 * 1000
@@ -13,16 +22,17 @@ let samples = []
 let benchmarkInterval = null
 let progressInterval = null
 let cpuWorkers = []
+let cpuWorkerUrl = null
 let gpuAnimFrame = null
 let loadChart = null
 let tempChart = null
 
 // ── Tema ────────────────────────────────────────────────────────
 async function initTheme() {
-  const theme = await ipcRenderer.invoke('get-theme')
+  const theme = await api.invoke('get-theme')
   document.body.classList.toggle('light', theme === 'light')
 }
-ipcRenderer.on('theme-changed', (_, theme) => document.body.classList.toggle('light', theme === 'light'))
+api.on('theme-changed', (theme) => document.body.classList.toggle('light', theme === 'light'))
 initTheme()
 
 // ── Test tipi seçimi ─────────────────────────────────────────────
@@ -41,16 +51,16 @@ document.querySelectorAll('[data-load]').forEach(btn => {
     btn.classList.add('active')
     if (btn.dataset.load === 'custom') {
       document.getElementById('customLoadSection').style.display = 'block'
-      selectedLoad = parseInt(document.getElementById('customLoadRange').value)
+      selectedLoad = parseInt(document.getElementById('customLoadRange').value, 10)
     } else {
       document.getElementById('customLoadSection').style.display = 'none'
-      selectedLoad = parseInt(btn.dataset.load)
+      selectedLoad = parseInt(btn.dataset.load, 10)
     }
   })
 })
 
 document.getElementById('customLoadRange').addEventListener('input', (e) => {
-  selectedLoad = parseInt(e.target.value)
+  selectedLoad = parseInt(e.target.value, 10)
   document.getElementById('customLoadVal').textContent = `${selectedLoad}%`
 })
 
@@ -59,7 +69,7 @@ document.querySelectorAll('[data-min]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-min]').forEach(b => b.classList.remove('active'))
     btn.classList.add('active')
-    selectedDuration = parseInt(btn.dataset.min) * 60 * 1000
+    selectedDuration = parseInt(btn.dataset.min, 10) * 60 * 1000
   })
 })
 
@@ -86,19 +96,23 @@ function startCpuStress(loadPercent) {
     }
   `
   const blob = new Blob([workerCode], { type: 'application/javascript' })
-  const url = URL.createObjectURL(blob)
+  cpuWorkerUrl = URL.createObjectURL(blob)
 
   const coreCount = navigator.hardwareConcurrency || 4
   for (let i = 0; i < coreCount; i++) {
-    const worker = new Worker(url)
+    const worker = new Worker(cpuWorkerUrl)
     worker.postMessage({ load: loadPercent })
     cpuWorkers.push(worker)
   }
 }
 
 function stopCpuStress() {
-  cpuWorkers.forEach(w => { w.postMessage('stop'); w.terminate() })
+  cpuWorkers.forEach(w => { try { w.postMessage('stop') } catch (e) {} ; try { w.terminate() } catch (e) {} })
   cpuWorkers = []
+  if (cpuWorkerUrl) {
+    URL.revokeObjectURL(cpuWorkerUrl)
+    cpuWorkerUrl = null
+  }
 }
 
 // ── GPU Stres (WebGL) ────────────────────────────────────────────
@@ -107,38 +121,55 @@ let glContext = null
 
 function startGpuStress(loadPercent) {
   const canvas = document.getElementById('glCanvas')
+  // A large drawing buffer means far more fragment-shader invocations per draw.
+  // (The old 512² canvas + a light shader barely touched a modern GPU.)
+  canvas.width = 1024
+  canvas.height = 1024
   const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
   if (!gl) return
   glContext = gl
 
   const vs = `attribute vec4 p; void main(){ gl_Position = p; }`
+  // Per-pixel workload. The loop bound is kept SMALL and constant: on Windows
+  // WebGL runs on ANGLE/Direct3D, which unrolls loops — a large bound (e.g. 480)
+  // blew past the shader instruction limit so it failed to compile and nothing
+  // ran at all. We keep the shader cheap-to-compile and scale the real load with
+  // the number of draws per frame instead (see drawsPerFrame below).
   const fs = `
     precision highp float;
     uniform float uTime;
-    uniform float uLoad;
+    uniform float uIter;
     void main(){
-      vec2 uv = gl_FragCoord.xy / 512.0;
+      vec2 uv = gl_FragCoord.xy / 1024.0;
+      vec2 c = (uv - 0.5) * 3.0;
+      vec2 z = vec2(0.0);
       float v = 0.0;
-      float iter = uLoad * 50.0;
-      for(float i = 0.0; i < 50.0; i++){
-        if(i >= iter) break;
-        v += sin(uv.x * (i+1.0) * 3.14 + uTime) * cos(uv.y * (i+1.0) * 3.14 - uTime);
+      for(float i = 0.0; i < 64.0; i++){
+        if(i >= uIter) break;
+        z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+        v += sin(z.x * 3.14159 + uTime) * cos(z.y * 3.14159 - uTime);
       }
       gl_FragColor = vec4(abs(sin(v)), abs(cos(v)), abs(sin(v+uTime)), 1.0);
     }
   `
 
-  const compile = (type, src) => {
+  const compile = (type, src, label) => {
     const s = gl.createShader(type)
     gl.shaderSource(s, src)
     gl.compileShader(s)
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error('[gpu-stress] ' + label + ' shader compile failed:', gl.getShaderInfoLog(s))
+    }
     return s
   }
 
   glProgram = gl.createProgram()
-  gl.attachShader(glProgram, compile(gl.VERTEX_SHADER, vs))
-  gl.attachShader(glProgram, compile(gl.FRAGMENT_SHADER, fs))
+  gl.attachShader(glProgram, compile(gl.VERTEX_SHADER, vs, 'vertex'))
+  gl.attachShader(glProgram, compile(gl.FRAGMENT_SHADER, fs, 'fragment'))
   gl.linkProgram(glProgram)
+  if (!gl.getProgramParameter(glProgram, gl.LINK_STATUS)) {
+    console.error('[gpu-stress] program link failed:', gl.getProgramInfoLog(glProgram))
+  }
   gl.useProgram(glProgram)
 
   const buf = gl.createBuffer()
@@ -147,23 +178,27 @@ function startGpuStress(loadPercent) {
   const pos = gl.getAttribLocation(glProgram, 'p')
   gl.enableVertexAttribArray(pos)
   gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0)
+  gl.viewport(0, 0, canvas.width, canvas.height)
 
   const uTime = gl.getUniformLocation(glProgram, 'uTime')
-  const uLoad = gl.getUniformLocation(glProgram, 'uLoad')
+  const uIter = gl.getUniformLocation(glProgram, 'uIter')
 
   let t = 0
-  const frameInterval = Math.max(1, Math.round((1 - loadPercent / 100) * 60))
-  let frameCount = 0
+  const frac = Math.max(0.05, Math.min(1, loadPercent / 100))
+  // Real load comes mostly from MANY draws per frame of a full-screen 1024² pass
+  // (a safe-to-compile shader). Draw count scales with the chosen level.
+  const iterCount = Math.max(16, Math.round(frac * 64))
+  const drawsPerFrame = Math.max(2, Math.round(frac * 48))
 
   function render() {
     if (!isRunning) return
-    frameCount++
-    if (frameCount % Math.max(1, frameInterval) === 0 || loadPercent >= 90) {
-      t += 0.05
-      gl.uniform1f(uTime, t)
-      gl.uniform1f(uLoad, loadPercent / 100)
+    t += 0.03
+    gl.uniform1f(uTime, t)
+    gl.uniform1f(uIter, iterCount)
+    for (let d = 0; d < drawsPerFrame; d++) {
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     }
+    gl.flush()
     gpuAnimFrame = requestAnimationFrame(render)
   }
   render()
@@ -172,6 +207,13 @@ function startGpuStress(loadPercent) {
 function stopGpuStress() {
   if (gpuAnimFrame) cancelAnimationFrame(gpuAnimFrame)
   gpuAnimFrame = null
+  // Free WebGL resources to prevent context leaks across runs.
+  if (glContext) {
+    try {
+      const lose = glContext.getExtension('WEBGL_lose_context')
+      if (lose) lose.loseContext()
+    } catch (e) {}
+  }
   glProgram = null
   glContext = null
 }
@@ -293,22 +335,35 @@ function updateLiveUI(sample) {
 function getVerdict(avgTemp, maxTemp, type) {
   if (maxTemp === null) return { cls: 'good', text: 'No temperature sensor data available.' }
   if (type === 'cpu') {
-    if (maxTemp >= 95) return { cls: 'danger', text: `🔴 Critical: CPU peaked at ${maxTemp}°C. Check cooling immediately. Possible thermal throttling.` }
-    if (maxTemp >= 85) return { cls: 'warn', text: `🟡 Warning: CPU reached ${maxTemp}°C. Consider improving airflow or reapplying thermal paste.` }
-    if (maxTemp >= 75) return { cls: 'warn', text: `🟡 Warm: CPU reached ${maxTemp}°C. Acceptable but monitor under extended loads.` }
-    return { cls: 'good', text: `🟢 Healthy: CPU temperatures are within safe range. Peak: ${maxTemp}°C, Avg: ${avgTemp}°C.` }
+    if (maxTemp >= 95) return { cls: 'danger', text: `Critical: CPU peaked at ${maxTemp}°C. Check cooling immediately. Possible thermal throttling.` }
+    if (maxTemp >= 85) return { cls: 'warn', text: `Warning: CPU reached ${maxTemp}°C. Consider improving airflow or reapplying thermal paste.` }
+    if (maxTemp >= 75) return { cls: 'warn', text: `Warm: CPU reached ${maxTemp}°C. Acceptable but monitor under extended loads.` }
+    return { cls: 'good', text: `Healthy: CPU temperatures are within safe range. Peak: ${maxTemp}°C, Avg: ${avgTemp}°C.` }
   } else {
-    if (maxTemp >= 90) return { cls: 'danger', text: `🔴 Critical: GPU peaked at ${maxTemp}°C. Improve case airflow urgently.` }
-    if (maxTemp >= 80) return { cls: 'warn', text: `🟡 Warning: GPU reached ${maxTemp}°C. Clean GPU fans or reapply thermal paste.` }
-    if (maxTemp >= 70) return { cls: 'warn', text: `🟡 Warm: GPU reached ${maxTemp}°C. Acceptable for most GPUs under load.` }
-    return { cls: 'good', text: `🟢 Healthy: GPU temperatures are within safe range. Peak: ${maxTemp}°C, Avg: ${avgTemp}°C.` }
+    if (maxTemp >= 90) return { cls: 'danger', text: `Critical: GPU peaked at ${maxTemp}°C. Improve case airflow urgently.` }
+    if (maxTemp >= 80) return { cls: 'warn', text: `Warning: GPU reached ${maxTemp}°C. Clean GPU fans or reapply thermal paste.` }
+    if (maxTemp >= 70) return { cls: 'warn', text: `Warm: GPU reached ${maxTemp}°C. Acceptable for most GPUs under load.` }
+    return { cls: 'good', text: `Healthy: GPU temperatures are within safe range. Peak: ${maxTemp}°C, Avg: ${avgTemp}°C.` }
   }
 }
 
 // ── Rapor ────────────────────────────────────────────────────────
 function showReport() {
+  const report = document.getElementById('reportSection')
   document.getElementById('progressSection').classList.remove('visible')
-  document.getElementById('reportSection').classList.add('visible')
+  report.classList.add('visible')
+
+  // Safety-cutoff banner (shown only when the thermal limit stopped the test).
+  const existing = document.getElementById('safetyBanner')
+  if (existing) existing.remove()
+  if (safetyTripped) {
+    const banner = document.createElement('div')
+    banner.id = 'safetyBanner'
+    banner.style.cssText = 'background:#7f1d1d;border:1px solid #ef4444;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#fecaca;line-height:1.4'
+    banner.textContent = '⚠ Test güvenlik için otomatik durduruldu — sıcaklık kritik eşiği aştı (CPU ≥ ' +
+      SAFETY_CPU_TEMP + '°C veya GPU ≥ ' + SAFETY_GPU_TEMP + '°C). Soğutmanı kontrol et.'
+    report.insertBefore(banner, report.firstChild)
+  }
 
   const cLS = calcStats(samples.map(s => s.cpu.load))
   const cTS = calcStats(samples.map(s => s.cpu.temp))
@@ -316,7 +371,6 @@ function showReport() {
   const gTS = calcStats(samples.map(s => s.gpu.temp))
   const gPS = calcStats(samples.map(s => s.gpu.power))
 
-  // CPU raporu
   const cpuCard = document.getElementById('cpuReportCard')
   cpuCard.style.display = selectedType !== 'gpu' ? 'block' : 'none'
   if (selectedType !== 'gpu') {
@@ -332,7 +386,6 @@ function showReport() {
     cpuV.textContent = cv.text
   }
 
-  // GPU raporu
   const gpuCard = document.getElementById('gpuReportCard')
   gpuCard.style.display = selectedType !== 'cpu' ? 'block' : 'none'
   if (selectedType !== 'cpu') {
@@ -348,7 +401,6 @@ function showReport() {
     gpuV.textContent = gv.text
   }
 
-  // Rapor grafikleri
   const labels = samples.map((_, i) => {
     const secs = i * 5
     const m = Math.floor(secs / 60)
@@ -376,13 +428,14 @@ function showReport() {
     options: { responsive: true, animation: false, plugins: { legend: { labels: { font: { size: 10 }, boxWidth: 10 } } }, scales: { x: { display: false }, y: { min: 0, max: 120 } } }
   })
 
-  lucide.createIcons()
+  if (typeof lucide !== 'undefined') lucide.createIcons()
 }
 
 // ── Başlat ───────────────────────────────────────────────────────
 document.getElementById('startBtn').addEventListener('click', () => {
   if (isRunning) return
   isRunning = true
+  safetyTripped = false
   samples = []
   startTime = Date.now()
 
@@ -390,29 +443,34 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('progressSection').classList.add('visible')
   document.getElementById('reportSection').classList.remove('visible')
 
-  // Live section görünürlüğü
   document.getElementById('cpuLiveSection').style.display = selectedType !== 'gpu' ? 'block' : 'none'
   document.getElementById('gpuLiveSection').style.display = selectedType !== 'cpu' ? 'block' : 'none'
 
-  // Badge'ler
   const badges = document.getElementById('activeBadges')
   badges.innerHTML = ''
-  if (selectedType !== 'gpu') badges.innerHTML += `<span class="stress-badge">💻 CPU ${selectedLoad}%</span>`
-  if (selectedType !== 'cpu') badges.innerHTML += `<span class="stress-badge">🎮 GPU ${selectedLoad}%</span>`
+  if (selectedType !== 'gpu') badges.innerHTML += `<span class="stress-badge">CPU ${selectedLoad}%</span>`
+  if (selectedType !== 'cpu') badges.innerHTML += `<span class="stress-badge">GPU ${selectedLoad}%</span>`
 
   initCharts()
 
-  // Stres başlat
   if (selectedType !== 'gpu') startCpuStress(selectedLoad)
   if (selectedType !== 'cpu') startGpuStress(selectedLoad)
 
-  // Örnek topla
   benchmarkInterval = setInterval(async () => {
-    const sample = await ipcRenderer.invoke('get-benchmark-sample')
-    if (sample) { samples.push(sample); updateLiveUI(sample) }
+    const sample = await api.invoke('get-benchmark-sample')
+    if (sample) {
+      samples.push(sample)
+      if (samples.length > MAX_SAMPLES) samples.shift()
+      updateLiveUI(sample)
+      // Thermal safety net: stop the test at once if a temperature gets dangerous.
+      const ct = sample.cpu.temp, gt = sample.gpu.temp
+      if ((ct != null && ct >= SAFETY_CPU_TEMP) || (gt != null && gt >= SAFETY_GPU_TEMP)) {
+        safetyTripped = true
+        stopBenchmark(true)
+      }
+    }
   }, 5000)
 
-  // Progress
   progressInterval = setInterval(() => {
     const elapsed = Date.now() - startTime
     const pct = Math.min((elapsed / selectedDuration) * 100, 100)
@@ -428,6 +486,8 @@ document.getElementById('startBtn').addEventListener('click', () => {
 function stopBenchmark(finished = false) {
   clearInterval(benchmarkInterval)
   clearInterval(progressInterval)
+  benchmarkInterval = null
+  progressInterval = null
   stopCpuStress()
   stopGpuStress()
   isRunning = false
@@ -451,7 +511,7 @@ document.getElementById('newBenchmarkBtn').addEventListener('click', () => {
 })
 
 // ── Kaydet ───────────────────────────────────────────────────────
-document.getElementById('saveReportBtn').addEventListener('click', () => {
+document.getElementById('saveReportBtn').addEventListener('click', async () => {
   const report = {
     date: new Date().toISOString(),
     testType: selectedType,
@@ -470,15 +530,46 @@ document.getElementById('saveReportBtn').addEventListener('click', () => {
     rawSamples: samples
   }
 
-  const fileName = `stress-benchmark-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`
-  const filePath = path.join(os.homedir(), 'Desktop', fileName)
+  const filename = `stress-benchmark-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`
+  const btn = document.getElementById('saveReportBtn')
+  const original = btn.textContent
+  const flash = (text) => {
+    btn.textContent = text
+    setTimeout(() => { btn.textContent = original }, 2000)
+  }
   try {
-    fs.writeFileSync(filePath, JSON.stringify(report, null, 2))
-    shell.showItemInFolder(filePath)
-  } catch (e) { console.error('Save failed:', e) }
+    const res = await api.invoke('save-benchmark-report', { filename, content: JSON.stringify(report, null, 2) })
+    if (res && res.ok) flash('✓ Saved')
+    else if (res && res.canceled) { /* user dismissed the dialog — leave the button as-is */ }
+    else flash('✕ Save failed')
+  } catch (e) {
+    console.error('Save failed:', e)
+    flash('✕ Save failed')
+  }
 })
 
 document.getElementById('closeBtn').addEventListener('click', () => {
-  if (isRunning) stopBenchmark(false)
-  ipcRenderer.send('close-benchmark')
+  // Tear down directly instead of calling stopBenchmark(): stopBenchmark switches
+  // to the report view (and builds charts) when samples exist, which is both the
+  // wrong thing to do while closing and a step that, if it threw, would keep the
+  // close-benchmark message from ever being sent — leaving the window stuck open.
+  try {
+    clearInterval(benchmarkInterval)
+    clearInterval(progressInterval)
+    stopCpuStress()
+    stopGpuStress()
+  } catch (e) { /* close no matter what */ }
+  isRunning = false
+  api.send('close-benchmark')
 })
+
+// Make sure we tear everything down if the user closes the window or navigates.
+window.addEventListener('beforeunload', () => {
+  if (isRunning) stopBenchmark(false)
+  stopCpuStress()
+  stopGpuStress()
+  if (loadChart) { try { loadChart.destroy() } catch (e) {} ; loadChart = null }
+  if (tempChart) { try { tempChart.destroy() } catch (e) {} ; tempChart = null }
+})
+
+})()

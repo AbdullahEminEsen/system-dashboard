@@ -1,0 +1,26 @@
+{
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2022": true,
+    "worker": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script"
+  },
+  "globals": {
+    "lucide": "readonly",
+    "Sortable": "readonly",
+    "Chart": "readonly",
+    "fetch": "readonly",
+    "AbortController": "readonly"
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "args": "none", "varsIgnorePattern": "^_" }],
+    "no-empty": ["warn", { "allowEmptyCatch": true }],
+    "no-undef": "error",
+    "no-redeclare": "error",
+    "no-constant-condition": ["warn", { "checkLoops": false }]
+  }
+}
