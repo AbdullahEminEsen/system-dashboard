@@ -226,16 +226,21 @@ class SystemPoller {
       try {
         const g = native.gpu(selectedGpuIndex)
         if (g) {
+          // NVML gives everything; the PDH fallback (AMD/Intel) gives only load +
+          // VRAM used, so fill name/VRAM-total from the enumerated GPU list.
+          const listed = allGpus[selectedGpuIndex] || allGpus[0] || {}
+          const total = g.memTotal ?? listed.vram ?? null
+          const used = g.memUsed != null ? Math.round(g.memUsed) : null
           this.gpu = {
-            name: g.name ?? '—',
-            vram: g.memTotal ?? null,
-            vramUsed: g.memUsed ?? null,
-            vramFree: (g.memTotal != null && g.memUsed != null) ? (g.memTotal - g.memUsed) : null,
-            load: g.load ?? null,
-            memLoad: g.memLoad ?? null,
+            name: g.name ?? listed.name ?? '—',
+            vram: total,
+            vramUsed: used,
+            vramFree: (total != null && used != null) ? (total - used) : null,
+            load: g.load != null ? Math.round(g.load) : null,
+            memLoad: g.memLoad != null ? Math.round(g.memLoad) : null,
             temp: g.temp ?? null,
             power: g.power ?? null,
-            vendor: 'NVIDIA'
+            vendor: g.name ? 'NVIDIA' : ''
           }
           this.lastGpu = now
           gpuHandled = true
