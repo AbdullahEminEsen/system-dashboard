@@ -17,12 +17,14 @@ const ALLOW_INVOKE = new Set([
     'get-selected-display',
     'get-benchmark-sample',
     'save-benchmark-report',
+    'get-gpu-highperf',
 ])
 
 const ALLOW_SEND = new Set([
     'set-theme', 'set-lang', 'set-layout', 'set-visible',
     'set-always-on-top', 'set-opacity',
     'set-selected-gpu', 'set-selected-display',
+    'set-gpu-highperf',
     'set-window-height',
     'open-editor', 'close-editor',
     'open-settings', 'close-settings',

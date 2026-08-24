@@ -173,6 +173,20 @@
       <div class="select-btn" data-min="60">60 min</div>
     </div>
 
+    <!-- GPU seçimi — açılışta uygulanır (Chromium GPU'yu başlangıçta seçer) -->
+    <div class="section-label">GPU</div>
+    <div class="select-grid" style="grid-template-columns:1fr 1fr;margin-bottom:6px">
+      <div class="select-btn" data-gpu="high">
+        <div>⚡ Yüksek Perf.</div>
+        <div style="font-size:10px;margin-top:2px">Ayrık GPU (NVIDIA)</div>
+      </div>
+      <div class="select-btn" data-gpu="low">
+        <div>🔋 Düşük Güç</div>
+        <div style="font-size:10px;margin-top:2px">Dahili GPU (Intel)</div>
+      </div>
+    </div>
+    <div id="gpuModeNote" style="font-size:10px;color:#fbbf24;margin-bottom:12px;min-height:12px"></div>
+
     <button class="btn btn-primary" id="startBtn">▶ Start Stress Test</button>
   </div>
 

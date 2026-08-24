@@ -73,6 +73,28 @@ document.querySelectorAll('[data-min]').forEach(btn => {
   })
 })
 
+// ── GPU seçimi ───────────────────────────────────────────────────
+// Chromium binds a GPU at startup, so this is a persisted preference applied on
+// the next launch — not a live switch. Default is high-performance (discrete).
+let appliedGpuMode = 'high'
+api.invoke('get-gpu-highperf').then(hp => {
+  appliedGpuMode = hp ? 'high' : 'low'
+  document.querySelectorAll('[data-gpu]').forEach(b => b.classList.toggle('active', b.dataset.gpu === appliedGpuMode))
+}).catch(() => {})
+
+document.querySelectorAll('[data-gpu]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-gpu]').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    const mode = btn.dataset.gpu
+    api.send('set-gpu-highperf', mode === 'high')
+    const note = document.getElementById('gpuModeNote')
+    if (note) note.textContent = mode !== appliedGpuMode
+      ? '⟳ Değişiklik uygulamayı yeniden başlatınca geçerli olur.'
+      : ''
+  })
+})
+
 // ── CPU Stres ────────────────────────────────────────────────────
 function startCpuStress(loadPercent) {
   const workerCode = `
@@ -125,7 +147,15 @@ function startGpuStress(loadPercent) {
   // (The old 512² canvas + a light shader barely touched a modern GPU.)
   canvas.width = 1024
   canvas.height = 1024
-  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
+  // Make it a small VISIBLE canvas while the test runs. A hidden (display:none)
+  // canvas isn't composited, and Chromium throttles requestAnimationFrame for a
+  // window it considers occluded — both of which left the GPU nearly idle. A
+  // visible, animating canvas keeps rAF at full rate and forces the pipeline.
+  canvas.style.cssText = 'position:fixed;right:10px;bottom:10px;width:96px;height:96px;border-radius:8px;border:1px solid var(--border-input);z-index:20;display:block'
+  // powerPreference:'high-performance' asks the browser for the discrete GPU on
+  // hybrid-graphics machines, so the stress actually lands on the NVIDIA card.
+  const glOpts = { powerPreference: 'high-performance', antialias: false, preserveDrawingBuffer: false }
+  const gl = canvas.getContext('webgl', glOpts) || canvas.getContext('experimental-webgl', glOpts)
   if (!gl) return
   glContext = gl
 
@@ -188,7 +218,8 @@ function startGpuStress(loadPercent) {
   // Real load comes mostly from MANY draws per frame of a full-screen 1024² pass
   // (a safe-to-compile shader). Draw count scales with the chosen level.
   const iterCount = Math.max(16, Math.round(frac * 64))
-  const drawsPerFrame = Math.max(2, Math.round(frac * 48))
+  const drawsPerFrame = Math.max(2, Math.round(frac * 64))
+  const pixel = new Uint8Array(4) // scratch for the forcing readPixels
 
   function render() {
     if (!isRunning) return
@@ -198,7 +229,11 @@ function startGpuStress(loadPercent) {
     for (let d = 0; d < drawsPerFrame; d++) {
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     }
-    gl.flush()
+    // Force the GPU to actually finish all those draws before the frame ends.
+    // readPixels blocks until the queued work completes, which both guarantees
+    // the shader runs and creates back-pressure that keeps the GPU continuously
+    // busy (instead of racing ahead and idling until the next vsync).
+    try { gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel) } catch (e) {}
     gpuAnimFrame = requestAnimationFrame(render)
   }
   render()
@@ -207,6 +242,8 @@ function startGpuStress(loadPercent) {
 function stopGpuStress() {
   if (gpuAnimFrame) cancelAnimationFrame(gpuAnimFrame)
   gpuAnimFrame = null
+  const canvas = document.getElementById('glCanvas')
+  if (canvas) canvas.style.display = 'none' // hide the live preview again
   // Free WebGL resources to prevent context leaks across runs.
   if (glContext) {
     try {

@@ -92,6 +92,16 @@ let benchmarkWindow = null
 
 app.isQuitting = false
 
+// On hybrid-graphics laptops (Intel iGPU + NVIDIA dGPU) Chromium runs WebGL on
+// the low-power integrated GPU by default — so the benchmark's GPU stress hit
+// the Intel chip while we monitored the idle NVIDIA card. Chromium picks its GPU
+// at startup and can't switch live, so this is a persisted preference read here.
+// Default is the discrete GPU so the benchmark works out of the box; the
+// benchmark UI lets the user flip it (takes effect on the next launch).
+if (store.get('gpuHighPerf', true)) {
+  app.commandLine.appendSwitch('force_high_performance_gpu')
+}
+
 // ── IPC validators ──────────────────────────────────────────────
 const isStr = (v, max = 200) => typeof v === 'string' && v.length > 0 && v.length <= max
 const isEnum = (v, allowed) => allowed.includes(v)
@@ -670,6 +680,12 @@ ipcMain.on('set-opacity', (_, val) => {
   if (!isNum(val, 0.1, 1)) { console.warn('[ipc] reject set-opacity'); return }
   store.set('opacity', val)
   if (mainWindow) { try { mainWindow.setOpacity(val) } catch (e) { } }
+})
+
+ipcMain.handle('get-gpu-highperf', () => store.get('gpuHighPerf', true))
+ipcMain.on('set-gpu-highperf', (_, val) => {
+  if (!isBool(val)) { console.warn('[ipc] reject set-gpu-highperf'); return }
+  store.set('gpuHighPerf', val) // applied at next startup
 })
 
 ipcMain.handle('get-gpu-list', () => allGpus)
