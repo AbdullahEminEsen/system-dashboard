@@ -23,3 +23,8 @@ npm-debug.log*
 # Editor klasörleri
 .vscode/
 .idea/
+
+assets/
+src/
+
+native/build/

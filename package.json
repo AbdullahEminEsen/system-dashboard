@@ -1,6 +1,6 @@
 {
   "name": "system-dashboard",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "description": "Gerçek zamanlı sistem bilgilerini gösteren masaüstü widget",
   "author": {
     "name": "Abdullah Emin Esen",
@@ -22,12 +22,13 @@
       "output": "dist"
     },
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         "nsis",
         "portable"
       ],
       "sign": null,
-      "requestedExecutionLevel": "requireAdministrator"
+      "requestedExecutionLevel": "asInvoker"
     },
     "linux": {
       "target": [
@@ -45,6 +46,7 @@
     },
     "files": [
       "src/**/*",
+      "assets/**/*",
       "package.json",
       "native/build/Release/sysmetrics.node"
     ],
