@@ -17,6 +17,9 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - name: Build native add-on
+        working-directory: native
+        run: npx --yes node-gyp rebuild
       - run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
