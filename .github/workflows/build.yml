@@ -20,9 +20,10 @@ jobs:
       - name: Build native add-on
         working-directory: native
         run: npx --yes node-gyp rebuild
-      - run: npm run build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # --publish never: the release job below is the only uploader. Letting
+      # electron-builder publish too (it does so on tags when a token is set)
+      # put every file on the release twice under different names.
+      - run: npm run build -- --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
@@ -36,13 +37,14 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: npm run build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run build -- --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: dist/*.AppImage
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.tar.gz
 
   release:
     needs: [build-windows, build-linux]
@@ -63,5 +65,7 @@ jobs:
           files: |
             artifacts/windows/*.exe
             artifacts/linux/*.AppImage
+            artifacts/linux/*.deb
+            artifacts/linux/*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -31,6 +31,7 @@
       "requestedExecutionLevel": "asInvoker"
     },
     "linux": {
+      "icon": "assets/icon.png",
       "target": [
         "AppImage",
         "deb",
@@ -39,10 +40,17 @@
       "category": "Utility"
     },
     "nsis": {
+      "artifactName": "System-Dashboard-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "System-Dashboard-${version}.${ext}"
+    },
+    "appImage": {
+      "artifactName": "System-Dashboard-${version}.${ext}"
     },
     "files": [
       "src/**/*",

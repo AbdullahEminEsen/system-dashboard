@@ -29,9 +29,11 @@ Head over to the [Releases](https://github.com/AbdullahEminEsen/system-dashboard
 
 | File | Description |
 |---|---|
-| `System Dashboard Setup x.x.x.exe` | Windows installer (recommended) |
-| `System Dashboard x.x.x.exe` | Windows portable, no installation needed |
-| `System Dashboard-x.x.x.AppImage` | Linux |
+| `System-Dashboard-Setup-x.x.x.exe` | Windows installer (recommended) |
+| `System-Dashboard-x.x.x.exe` | Windows portable, no installation needed |
+| `System-Dashboard-x.x.x.AppImage` | Linux (any distro) |
+| `system-dashboard_x.x.x_amd64.deb` | Debian / Ubuntu |
+| `system-dashboard-x.x.x.tar.gz` | Linux archive |
 
 > **⚠️ Windows:** You may see a SmartScreen warning. Click **"More info"** → **"Run anyway"**. The app is open source and safe to install.
 
