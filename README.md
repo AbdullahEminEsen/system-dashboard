@@ -99,7 +99,7 @@ GPU metrics are read natively per vendor, with a graceful fallback:
 | AMD | PDH counters + ADL (`atiadlxx.dll`) | ✅ | ✅ | ✅ | ✅ |
 | Intel | PDH counters | ✅ | ✅ | — | — |
 
-Per-process GPU usage and VRAM come from the same Windows PDH counters Task Manager uses (`GPU Engine`, `GPU Process Memory`), so they work on every vendor. Processes are matched to a GPU through the DXGI adapter LUID.
+Per-process GPU usage and VRAM come from the same Windows PDH counters Task Manager uses (`GPU Engine`, `GPU Process Memory`), so they work on every vendor. Processes are matched to a GPU through the adapter LUID (D3DKMT). The counters take ~30 s to set up the first time, so the add-on prepares them on a background thread and the card shows a short loading state.
 
 This requires the native add-on to be built (see below). Without it, GPU data falls back to `systeminformation` (name only on non-NVIDIA cards).
 

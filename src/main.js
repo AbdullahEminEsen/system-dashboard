@@ -203,27 +203,30 @@ function applyCSP() {
 
 // ── Per-process GPU usage & VRAM alert ─────────────────────────
 // The native add-on reports every process on every adapter, keyed by the
-// adapter's LUID. DXGI gives LUID <-> name, so we keep only the rows for the GPU
+// adapter's LUID. adapters() gives LUID <-> name, so we keep only the rows for the GPU
 // shown in the widget — on a hybrid laptop the browser on the Intel iGPU must
 // not be listed under the NVIDIA card.
 let allAdapters = []
+let visibleCardsCache = store.get('visibleCards', DEFAULT_VISIBLE)
 const GPU_PROC_ROWS = 5
 
 function selectedAdapterLuid(gpuName) {
   if (!allAdapters.length) return null
   const want = (gpuName || allGpus[selectedGpuIndex]?.name || '').toLowerCase()
   const hit = want && allAdapters.find(a => a.name.toLowerCase() === want || a.name.toLowerCase().includes(want) || want.includes(a.name.toLowerCase()))
-  if (hit) return hit.luid
-  // No name to match (e.g. GPU still loading): assume the discrete card.
-  return allAdapters.reduce((a, b) => (b.vram > a.vram ? b : a)).luid
+  // No name to match (e.g. GPU still loading): don't filter rather than guess.
+  return hit ? hit.luid : null
 }
 
 // Returns null when per-process data isn't available at all (no add-on / no
-// PDH counters) so the card can say so, vs. [] for "nothing is using the GPU".
+// PDH counters) so the card can say so, 'loading' while the add-on is still
+// setting up its counters in the background, and [] for "nothing uses the GPU".
 function readGpuProcesses(gpuName) {
   if (!native || !native.gpuProcesses) return null
+  if (!visibleCardsCache.includes('card-gpuproc')) return [] // skip the PDH work when nobody sees it
   let rows
   try { rows = native.gpuProcesses() } catch (e) { return null }
+  if (rows === undefined) return 'loading'
   if (!Array.isArray(rows)) return null
   const luid = selectedAdapterLuid(gpuName)
   // Merge multi-process apps (browsers, Electron, DataLoader workers) by exe name.
@@ -262,7 +265,8 @@ function checkVramAlert(gpu, procs) {
     console.log('[vram-alert] ' + pct + '% (' + gpu.vramUsed + ' / ' + gpu.vram + ' MB)')
     if (Notification.isSupported()) {
       const t = i18n[store.get('lang', 'tr')]
-      const top = (procs || readGpuProcesses(gpu.name) || [])[0]
+      const list = Array.isArray(procs) ? procs : readGpuProcesses(gpu.name)
+      const top = Array.isArray(list) ? list[0] : null
       new Notification({
         title: t.vramAlertTitle,
         body: t.vramAlertBody(pct, gpu.vramUsed, gpu.vram, top ? top.name + ' (' + top.mem + ' MB)' : null),
@@ -664,6 +668,7 @@ app.whenReady().then(async () => {
     addGpuProcCardOnce()
   } catch (e) { /* keep going with defaults */ }
 
+  visibleCardsCache = store.get('visibleCards', DEFAULT_VISIBLE) // after repair/migration above
   if (native && native.adapters) {
     try { allAdapters = native.adapters() || [] } catch (e) { allAdapters = [] }
   }
@@ -817,6 +822,7 @@ ipcMain.handle('get-visible', () => store.get('visibleCards', DEFAULT_VISIBLE))
 ipcMain.on('set-visible', (_, visible) => {
   if (!isVisible(visible)) { console.warn('[ipc] reject set-visible'); return }
   store.set('visibleCards', visible)
+  visibleCardsCache = visible
   if (mainWindow) mainWindow.webContents.send('visible-updated', visible)
 })
 

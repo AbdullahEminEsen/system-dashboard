@@ -312,7 +312,8 @@
     const list = elById('gpuProcList')
     if (!list) return
     if (!Array.isArray(procs) || procs.length === 0) {
-      list.innerHTML = `<div class="gpuproc-empty">${procs ? t.gpuProcEmpty : t.gpuProcUnavailable}</div>`
+      const msg = procs === 'loading' ? t.gpuProcLoading : (procs ? t.gpuProcEmpty : t.gpuProcUnavailable)
+      list.innerHTML = `<div class="gpuproc-empty">${msg}</div>`
       return
     }
     const total = gpu && gpu.vram ? gpu.vram : null

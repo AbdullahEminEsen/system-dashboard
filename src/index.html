@@ -167,7 +167,9 @@
     .bar {
       height: 6px;
       border-radius: 4px;
-      transition: width 0.5s ease;
+      /* No width transition: animating several bars on every update kept the
+         renderer + GPU process repainting at 60 fps and was ~2/3 of the
+         widget's total CPU cost. */
     }
 
     .clock-value {

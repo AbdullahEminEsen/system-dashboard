@@ -5,8 +5,8 @@
 //   processCount()   -> number                 (EnumProcesses; native tasklist)
 //   netBytes()       -> {rx,tx} | null          (GetIfTable2 octet counters, physical NICs)
 //   gpuList()        -> [{index,name}] | null   (NVML enumeration)
-//   adapters()       -> [{name,luid,vram}] | null (DXGI; luid matches PDH instance names)
-//   gpuProcesses()   -> [{pid,name,luid,mem,load}] | null (PDH per-process GPU, like Task Manager)
+//   adapters()       -> [{name,luid}] | null   (D3DKMT; luid matches PDH instance names)
+//   gpuProcesses()   -> [{pid,name,luid,mem,load}] | undefined (warming up) | null (PDH per-process GPU, like Task Manager)
 //   gpu(index)       -> {name?,load,memLoad?,temp?,power?,memUsed?,memTotal?,
 //                        clockCore?,clockMem?,fan?,throttle?} | null
 //
@@ -27,13 +27,14 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include <netioapi.h>
-#include <dxgi.h>
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <vector>
 #include <map>
+#include <atomic>
+#include <thread>
 #include <string>
 #include <cstdlib>
 #include <cstring>
@@ -104,12 +105,16 @@ static bool ensureNvml() {
 static PDH_HQUERY   g_query = NULL;
 static PDH_HCOUNTER g_cUtil = NULL;   // \GPU Engine(*)\Utilization Percentage
 static PDH_HCOUNTER g_cVram = NULL;   // \GPU Adapter Memory(*)\Dedicated Usage
-static bool g_pdhReady = false, g_pdhTried = false;
+// Setting up the wildcard "GPU Engine(*)" counters is very slow the first time
+// (measured ~30 s with thousands of engine instances). Done on the calling
+// thread it froze Electron's main process long enough for Chromium to declare
+// its network service crashed, so the page took ~30 s to appear. Both PDH
+// queries are therefore initialized on a background thread; until ready the
+// readers return "not yet" and JS falls back / shows a loading state.
+enum PdhState { PDH_IDLE = 0, PDH_INIT = 1, PDH_READY = 2, PDH_FAILED = 3 };
+static std::atomic<int> g_pdhState(PDH_IDLE);
 
-static bool ensurePdh() {
-  if (g_pdhReady) return true;
-  if (g_pdhTried) return false;
-  g_pdhTried = true;
+static bool initPdh() {
   if (PdhOpenQueryW(NULL, 0, &g_query) != ERROR_SUCCESS) return false;
   if (PdhAddEnglishCounterW(g_query, L"\\GPU Engine(*)\\Utilization Percentage", 0, &g_cUtil) != ERROR_SUCCESS) {
     PdhCloseQuery(g_query); g_query = NULL; return false;
@@ -117,9 +122,20 @@ static bool ensurePdh() {
   // VRAM counter is optional — ignore failure.
   PdhAddEnglishCounterW(g_query, L"\\GPU Adapter Memory(*)\\Dedicated Usage", 0, &g_cVram);
   PdhCollectQueryData(g_query); // prime (rate counters need a first sample)
-  g_pdhReady = true;
   return true;
 }
+
+// Starts initialization on first use; true only once the query is ready.
+static int pdhStateAsync(std::atomic<int>& state, bool (*init)()) {
+  int expected = PDH_IDLE;
+  if (state.compare_exchange_strong(expected, PDH_INIT)) {
+    std::thread([&state, init]() { state = init() ? PDH_READY : PDH_FAILED; }).detach();
+    return PDH_INIT;
+  }
+  return state.load();
+}
+
+static bool ensurePdh() { return pdhStateAsync(g_pdhState, initPdh) == PDH_READY; }
 
 // Overall GPU utilization %: group engine instances by type, sum within a type,
 // take the busiest type (this tracks Task Manager's headline number closely).
@@ -173,18 +189,14 @@ static double pdhVramMB() {
 static PDH_HQUERY   g_pq = NULL;
 static PDH_HCOUNTER g_pUtil = NULL;   // \GPU Engine(pid_*)\Utilization Percentage
 static PDH_HCOUNTER g_pMem = NULL;    // \GPU Process Memory(pid_*)\Dedicated Usage
-static bool g_pqReady = false, g_pqTried = false;
+static std::atomic<int> g_pqState(PDH_IDLE);
 
-static bool ensureProcPdh() {
-  if (g_pqReady) return true;
-  if (g_pqTried) return false;
-  g_pqTried = true;
+static bool initProcPdh() {
   if (PdhOpenQueryW(NULL, 0, &g_pq) != ERROR_SUCCESS) return false;
   PdhAddEnglishCounterW(g_pq, L"\\GPU Engine(*)\\Utilization Percentage", 0, &g_pUtil);
   PdhAddEnglishCounterW(g_pq, L"\\GPU Process Memory(*)\\Dedicated Usage", 0, &g_pMem);
   if (!g_pUtil && !g_pMem) { PdhCloseQuery(g_pq); g_pq = NULL; return false; }
   PdhCollectQueryData(g_pq); // prime the rate counter
-  g_pqReady = true;
   return true;
 }
 
@@ -303,11 +315,16 @@ Napi::Value ProcessCount(const Napi::CallbackInfo& info) {
 // Total bytes received/sent on physical, connected adapters. JS turns two
 // samples into a rate. This replaces systeminformation's networkStats(), which
 // on Windows spawns PowerShell and took ~18s on its first call.
-Napi::Value NetBytes(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
+// GetIfTable2 walks every interface (filters, tunnels, virtual switches) and
+// costs ~7 ms, so it is only used every 30 s to pick the physical adapters;
+// each tick then reads just those rows with GetIfEntry2.
+static std::vector<NET_IFINDEX> g_netIfs;
+static ULONGLONG g_netIfsAt = 0;
+
+static void refreshNetIfs() {
+  g_netIfs.clear();
   PMIB_IF_TABLE2 table = NULL;
-  if (GetIfTable2(&table) != NO_ERROR || !table) return env.Null();
-  unsigned long long rx = 0, tx = 0;
+  if (GetIfTable2(&table) != NO_ERROR || !table) return;
   for (ULONG i = 0; i < table->NumEntries; i++) {
     const MIB_IF_ROW2& r = table->Table[i];
     if (r.Type == IF_TYPE_SOFTWARE_LOOPBACK) continue;
@@ -316,39 +333,83 @@ Napi::Value NetBytes(const Napi::CallbackInfo& info) {
     // mirror the same traffic and would double-count it.
     if (!r.InterfaceAndOperStatusFlags.HardwareInterface) continue;
     if (r.InterfaceAndOperStatusFlags.FilterInterface) continue;
+    g_netIfs.push_back(r.InterfaceIndex);
+  }
+  FreeMibTable(table);
+}
+
+Napi::Value NetBytes(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  ULONGLONG now = GetTickCount64();
+  if (g_netIfsAt == 0 || now - g_netIfsAt >= 30000) { refreshNetIfs(); g_netIfsAt = now; }
+  unsigned long long rx = 0, tx = 0;
+  bool stale = false;
+  for (size_t i = 0; i < g_netIfs.size(); i++) {
+    MIB_IF_ROW2 r; memset(&r, 0, sizeof(r));
+    r.InterfaceIndex = g_netIfs[i];
+    if (GetIfEntry2(&r) != NO_ERROR || r.OperStatus != IfOperStatusUp) { stale = true; continue; }
     rx += r.InOctets;
     tx += r.OutOctets;
   }
-  FreeMibTable(table);
+  // An adapter went away/down: rescan next call (the rate for this tick may dip).
+  if (stale) g_netIfsAt = 0;
   Napi::Object o = Napi::Object::New(env);
   o.Set("rx", Napi::Number::New(env, (double)rx));
   o.Set("tx", Napi::Number::New(env, (double)tx));
   return o;
 }
 
-// DXGI adapters with their LUID formatted the way PDH instance names spell it,
+// GPU adapters with their LUID formatted the way PDH instance names spell it,
 // so per-process rows can be attributed to the right GPU on hybrid laptops.
+//
+// Uses the thin D3DKMT kernel thunks in gdi32 rather than DXGI: creating a DXGI
+// factory inside Electron's browser process crashed Chromium's network service
+// and delayed the first page load by ~30 s. Structs are declared locally (from
+// d3dkmthk.h) and the functions resolved at runtime, like NVML above.
+typedef UINT D3DKMT_HANDLE_;
+struct KmtAdapterInfo { D3DKMT_HANDLE_ hAdapter; LUID AdapterLuid; ULONG NumOfSources; BOOL bPrecisePresentRegionsPreferred; };
+struct KmtEnumAdapters2 { ULONG NumAdapters; KmtAdapterInfo* pAdapters; };
+struct KmtQueryAdapterInfo { D3DKMT_HANDLE_ hAdapter; UINT Type; void* pPrivateDriverData; UINT PrivateDriverDataSize; };
+struct KmtAdapterRegistryInfo { WCHAR AdapterString[MAX_PATH]; WCHAR BiosString[MAX_PATH]; WCHAR DacType[MAX_PATH]; WCHAR ChipType[MAX_PATH]; };
+struct KmtCloseAdapter { D3DKMT_HANDLE_ hAdapter; };
+#define KMTQAITYPE_ADAPTERREGISTRYINFO_ 8
+typedef LONG (APIENTRY *PFN_KmtEnum2)(KmtEnumAdapters2*);
+typedef LONG (APIENTRY *PFN_KmtQuery)(const KmtQueryAdapterInfo*);
+typedef LONG (APIENTRY *PFN_KmtClose)(const KmtCloseAdapter*);
+
 Napi::Value Adapters(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  IDXGIFactory1* factory = NULL;
-  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)) || !factory) return env.Null();
+  HMODULE gdi = GetModuleHandleA("gdi32.dll");
+  if (!gdi) gdi = LoadLibraryA("gdi32.dll");
+  if (!gdi) return env.Null();
+  PFN_KmtEnum2 enumAdapters = (PFN_KmtEnum2)GetProcAddress(gdi, "D3DKMTEnumAdapters2");
+  PFN_KmtQuery query = (PFN_KmtQuery)GetProcAddress(gdi, "D3DKMTQueryAdapterInfo");
+  PFN_KmtClose closeAdapter = (PFN_KmtClose)GetProcAddress(gdi, "D3DKMTCloseAdapter");
+  if (!enumAdapters || !query || !closeAdapter) return env.Null();
+
+  KmtEnumAdapters2 e = { 0, NULL };
+  if (enumAdapters(&e) != 0 || e.NumAdapters == 0) return env.Null(); // first call: count
+  std::vector<KmtAdapterInfo> list(e.NumAdapters);
+  e.pAdapters = list.data();
+  if (enumAdapters(&e) != 0) return env.Null();
+
   Napi::Array arr = Napi::Array::New(env);
   unsigned int k = 0;
-  IDXGIAdapter1* ad = NULL;
-  for (UINT i = 0; factory->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND; i++) {
-    DXGI_ADAPTER_DESC1 d;
-    if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
-      char luid[32];
-      snprintf(luid, sizeof(luid), "0x%08X_0x%08X", (unsigned)d.AdapterLuid.HighPart, (unsigned)d.AdapterLuid.LowPart);
-      Napi::Object o = Napi::Object::New(env);
-      o.Set("name", Napi::String::New(env, toUtf8(d.Description)));
-      o.Set("luid", Napi::String::New(env, luid));
-      o.Set("vram", Napi::Number::New(env, (double)(d.DedicatedVideoMemory / 1048576ULL)));
-      arr.Set(k++, o);
-    }
-    ad->Release();
+  for (ULONG i = 0; i < e.NumAdapters; i++) {
+    KmtAdapterRegistryInfo reg; memset(&reg, 0, sizeof(reg));
+    KmtQueryAdapterInfo q = { list[i].hAdapter, KMTQAITYPE_ADAPTERREGISTRYINFO_, &reg, sizeof(reg) };
+    std::wstring name = (query(&q) == 0) ? std::wstring(reg.AdapterString) : std::wstring();
+    KmtCloseAdapter c = { list[i].hAdapter };
+    closeAdapter(&c);
+    // Skip the software rasterizer ("Microsoft Basic Render Driver") and nameless entries.
+    if (name.empty() || name.find(L"Microsoft Basic") == 0) continue;
+    char luid[32];
+    snprintf(luid, sizeof(luid), "0x%08X_0x%08X", (unsigned)list[i].AdapterLuid.HighPart, (unsigned)list[i].AdapterLuid.LowPart);
+    Napi::Object o = Napi::Object::New(env);
+    o.Set("name", Napi::String::New(env, toUtf8(name)));
+    o.Set("luid", Napi::String::New(env, luid));
+    arr.Set(k++, o);
   }
-  factory->Release();
   return arr;
 }
 
@@ -356,7 +417,9 @@ Napi::Value Adapters(const Napi::CallbackInfo& info) {
 // busiest engine type, same rule as pdhUtil). The caller filters by luid.
 Napi::Value GpuProcesses(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  if (!ensureProcPdh()) return env.Null();
+  int st = pdhStateAsync(g_pqState, initProcPdh);
+  if (st == PDH_INIT) return env.Undefined(); // still warming up (see note at PdhState)
+  if (st != PDH_READY) return env.Null();
   if (PdhCollectQueryData(g_pq) != ERROR_SUCCESS) return env.Null();
 
   struct Row { DWORD pid = 0; std::wstring luid; double mem = 0; std::map<std::wstring, double> eng; };
@@ -389,7 +452,12 @@ Napi::Value GpuProcesses(const Napi::CallbackInfo& info) {
     }
   }
 
-  std::map<DWORD, std::string> names = processNames();
+  // Toolhelp snapshots cost a few ms with hundreds of processes; GPU users are
+  // long-lived, so only re-snapshot when a pid we haven't named shows up.
+  static std::map<DWORD, std::string> names;
+  for (std::map<std::wstring, Row>::iterator it = rows.begin(); it != rows.end(); ++it) {
+    if (names.find(it->second.pid) == names.end()) { names = processNames(); break; }
+  }
   Napi::Array arr = Napi::Array::New(env);
   unsigned int k = 0;
   for (std::map<std::wstring, Row>::iterator it = rows.begin(); it != rows.end(); ++it) {
@@ -451,7 +519,20 @@ Napi::Value Gpu(const Napi::CallbackInfo& info) {
       // Laptop GPUs usually have no driver-controlled fan -> NOT_SUPPORTED, key left unset.
       if (p_fan)  { unsigned int f=0; if (p_fan(dev,&f)==0) o.Set("fan", Napi::Number::New(env,f)); }
       // Raw clocks-event bitmask; decoded in JS (power cap / thermal / idle ...).
-      if (p_reasons){ unsigned long long r=0; if (p_reasons(dev,&r)==0) o.Set("throttle", Napi::Number::New(env,(double)r)); }
+      // This call alone measured ~15 ms (more than everything else combined),
+      // so it is cached per device and refreshed at most every 5 s.
+      if (p_reasons) {
+        static std::map<unsigned int, std::pair<ULONGLONG, unsigned long long> > cache;
+        ULONGLONG now = GetTickCount64();
+        std::map<unsigned int, std::pair<ULONGLONG, unsigned long long> >::iterator c = cache.find(index);
+        if (c == cache.end() || now - c->second.first >= 5000) {
+          unsigned long long r = 0;
+          if (p_reasons(dev, &r) == 0) cache[index] = std::make_pair(now, r);
+          else cache.erase(index);
+          c = cache.find(index);
+        }
+        if (c != cache.end()) o.Set("throttle", Napi::Number::New(env, (double)c->second.second));
+      }
       return o;
     }
   }
