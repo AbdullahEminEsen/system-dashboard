@@ -46,6 +46,9 @@ Head over to the [Releases](https://github.com/AbdullahEminEsen/system-dashboard
 - ⚙️ Running process count
 - 🖥️ Screen resolution & refresh rate (multi-display support)
 - 🎮 GPU usage, temperature, VRAM & power draw
+- ⏱️ GPU core clock, fan speed and throttle reason (power limit / thermal) on NVIDIA
+- 📋 Per-process GPU usage — which apps hold VRAM and load the GPU (like Task Manager's GPU columns), filtered to the selected GPU on hybrid laptops
+- 🚨 VRAM-almost-full warning at 90 % with a desktop notification — keeps watching while the widget is hidden in the tray, so a long AI training run warns you before it runs out of memory
 - 🕐 Clock & date
 - ⏱️ System uptime
 
@@ -69,6 +72,7 @@ Head over to the [Releases](https://github.com/AbdullahEminEsen/system-dashboard
 - 🫥 Transparency (4 opacity levels)
 - 🌙 Theme toggle
 - 🌍 Language (Turkish / English)
+- 🔄 Refresh rate (1 s / 2 s / 5 s)
 
 ### System Tray
 - App runs in the background when closed
@@ -80,9 +84,10 @@ Head over to the [Releases](https://github.com/AbdullahEminEsen/system-dashboard
 The widget is built to be light on resources:
 
 - **CPU load, RAM and uptime** are read directly from the OS (`os` module) — no external processes are spawned for the frequent updates.
-- **GPU, process count and disk** use a small optional native add-on (see below) so they don't shell out to `wmic` / `nvidia-smi` / `tasklist`; when the add-on isn't built they fall back to `systeminformation`.
+- **GPU, network and process count** use a small optional native add-on (NVML / PDH / `GetIfTable2` / `EnumProcesses`) so they don't shell out to `wmic` / `nvidia-smi` / `tasklist` / PowerShell; disk uses Node's `fs.statfs`. When the add-on isn't built they fall back to `systeminformation`.
+- Slow `systeminformation` probes run **in the background** and never hold up the CPU/RAM/GPU update — on Windows its first network read alone can take ~20 s.
 - Polling is a **self-scheduling loop** (the next tick is scheduled only after the previous one finishes, so calls never pile up) and **pauses entirely while the widget is hidden** in the tray.
-- Heavy probes are throttled (GPU/temperature ~20 s, processes/disk ~60 s, network ~15 s); the light heartbeat runs every 5 s.
+- The update interval is selectable in Settings (default 2 s). CPU temperature probing stops after a few empty reads on machines without a readable sensor.
 
 ## GPU support
 
@@ -93,6 +98,8 @@ GPU metrics are read natively per vendor, with a graceful fallback:
 | NVIDIA | NVML (`nvml.dll`) | ✅ | ✅ | ✅ | ✅ |
 | AMD | PDH counters + ADL (`atiadlxx.dll`) | ✅ | ✅ | ✅ | ✅ |
 | Intel | PDH counters | ✅ | ✅ | — | — |
+
+Per-process GPU usage and VRAM come from the same Windows PDH counters Task Manager uses (`GPU Engine`, `GPU Process Memory`), so they work on every vendor. Processes are matched to a GPU through the DXGI adapter LUID.
 
 This requires the native add-on to be built (see below). Without it, GPU data falls back to `systeminformation` (name only on non-NVIDIA cards).
 

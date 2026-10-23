@@ -18,6 +18,7 @@ const ALLOW_INVOKE = new Set([
     'get-benchmark-sample',
     'save-benchmark-report',
     'get-gpu-highperf',
+    'get-refresh-rate',
 ])
 
 const ALLOW_SEND = new Set([
@@ -25,6 +26,7 @@ const ALLOW_SEND = new Set([
     'set-always-on-top', 'set-opacity',
     'set-selected-gpu', 'set-selected-display',
     'set-gpu-highperf',
+    'set-refresh-rate',
     'set-window-height',
     'open-editor', 'close-editor',
     'open-settings', 'close-settings',

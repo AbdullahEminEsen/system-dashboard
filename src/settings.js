@@ -56,7 +56,10 @@ async function initLang() {
   updateLangUI(lang)
 }
 
+let currentLang = 'tr'
+
 function updateLangUI(lang) {
+  currentLang = lang
   const t = i18nRef[lang]
 
   document.querySelectorAll('.lang-btn').forEach(btn => {
@@ -74,6 +77,8 @@ function updateLangUI(lang) {
   document.getElementById('opacityLabelText').textContent = t.opacity
   document.getElementById('alwaysOnTopLabelText').textContent = t.alwaysOnTop
   document.getElementById('alwaysOnTopSubText').textContent = t.alwaysOnTopDesc
+  document.getElementById('refreshLabelText').textContent = t.refreshRate
+  updateRefreshUI(currentRefreshMs)
   // NOTE: labels/sub-labels above are targeted by id. The previous version also
   // reassigned them positionally via querySelectorAll('.setting-*'), and one of
   // those lines wrote t.alwaysOnTopDesc into .setting-sub[1] — the *opacity*
@@ -90,6 +95,31 @@ document.querySelectorAll('.lang-btn').forEach(btn => {
 
 api.on('lang-changed', (lang) => updateLangUI(lang))
 
+// ── Yenileme hızı ───────────────────────────────────────────────
+let currentRefreshMs = 2000
+
+function updateRefreshUI(ms) {
+  currentRefreshMs = ms
+  document.getElementById('refreshSubText').textContent = i18nRef[currentLang].refreshRateDesc(ms / 1000)
+  document.querySelectorAll('.refresh-btn').forEach(btn => {
+    const active = parseInt(btn.dataset.ms, 10) === ms
+    btn.style.color = active ? 'var(--text-primary)' : 'var(--text-muted)'
+    btn.style.borderColor = active ? '#3b82f6' : 'var(--border-input)'
+  })
+}
+
+async function initRefresh() {
+  updateRefreshUI(await api.invoke('get-refresh-rate'))
+}
+
+document.querySelectorAll('.refresh-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const ms = parseInt(btn.dataset.ms, 10)
+    api.send('set-refresh-rate', ms)
+    updateRefreshUI(ms)
+  })
+})
+
 // ── Pin ─────────────────────────────────────────────────────────
 async function initPin() {
   const val = await api.invoke('get-always-on-top')
@@ -102,7 +132,8 @@ document.getElementById('pinToggle').addEventListener('change', (e) => {
 
 // ── Başlat ──────────────────────────────────────────────────────
 async function init() {
-  await Promise.all([initTheme(), initOpacity(), initPin(), initLang()])
+  await Promise.all([initTheme(), initOpacity(), initPin(), initRefresh()])
+  await initLang() // after initRefresh so the sub-label is rendered in the right language
 }
 init()
 

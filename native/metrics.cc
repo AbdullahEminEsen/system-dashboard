@@ -3,8 +3,12 @@
 // Exposes:
 //   hello()          -> "native ok"
 //   processCount()   -> number                 (EnumProcesses; native tasklist)
+//   netBytes()       -> {rx,tx} | null          (GetIfTable2 octet counters, physical NICs)
 //   gpuList()        -> [{index,name}] | null   (NVML enumeration)
-//   gpu(index)       -> {name?,load,memLoad?,temp?,power?,memUsed?,memTotal?} | null
+//   adapters()       -> [{name,luid,vram}] | null (DXGI; luid matches PDH instance names)
+//   gpuProcesses()   -> [{pid,name,luid,mem,load}] | null (PDH per-process GPU, like Task Manager)
+//   gpu(index)       -> {name?,load,memLoad?,temp?,power?,memUsed?,memTotal?,
+//                        clockCore?,clockMem?,fan?,throttle?} | null
 //
 // GPU stats come from NVIDIA NVML when available (full: load/temp/power/VRAM).
 // On non-NVIDIA GPUs (AMD/Intel) NVML is absent, so we fall back to Windows PDH
@@ -12,8 +16,19 @@
 // GPU utilization and dedicated VRAM usage. (Temperature/power on AMD would need
 // AMD's ADL library; not covered here.)
 
+// GetIfTable2 & co. are Vista+ APIs; make sure the SDK headers expose them.
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
 #include <napi.h>
+#include <winsock2.h>
+#include <ws2ipdef.h>   // netioapi.h only declares GetIfTable2 when this is in scope
 #include <windows.h>
+#include <iphlpapi.h>
+#include <netioapi.h>
+#include <dxgi.h>
+#include <tlhelp32.h>
 #include <psapi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
@@ -22,6 +37,7 @@
 #include <string>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 
 // ── NVML (dynamically loaded; no SDK headers needed) ────────────────────────
 typedef int nvmlReturn_t;                 // NVML_SUCCESS == 0
@@ -37,12 +53,20 @@ typedef nvmlReturn_t (*PFN_util)(nvmlDevice_t, nvmlUtilization_t*);
 typedef nvmlReturn_t (*PFN_temp)(nvmlDevice_t, int, unsigned int*);
 typedef nvmlReturn_t (*PFN_power)(nvmlDevice_t, unsigned int*);
 typedef nvmlReturn_t (*PFN_mem)(nvmlDevice_t, nvmlMemory_t*);
+typedef nvmlReturn_t (*PFN_clock)(nvmlDevice_t, int, unsigned int*);
+typedef nvmlReturn_t (*PFN_fan)(nvmlDevice_t, unsigned int*);
+typedef nvmlReturn_t (*PFN_reasons)(nvmlDevice_t, unsigned long long*);
+
+// nvmlClockType_t
+#define NVML_CLOCK_GRAPHICS 0
+#define NVML_CLOCK_MEM      2
 
 static HMODULE g_nvml = NULL;
 static bool g_ready = false, g_tried = false;
 static PFN_init p_init = NULL; static PFN_count p_count = NULL; static PFN_handle p_handle = NULL;
 static PFN_name p_name = NULL; static PFN_util p_util = NULL; static PFN_temp p_temp = NULL;
 static PFN_power p_power = NULL; static PFN_mem p_mem = NULL;
+static PFN_clock p_clock = NULL; static PFN_fan p_fan = NULL; static PFN_reasons p_reasons = NULL;
 
 template <typename T>
 static T loadFn(HMODULE h, const char* primary, const char* fallback = NULL) {
@@ -66,6 +90,10 @@ static bool ensureNvml() {
   p_temp   = loadFn<PFN_temp>(g_nvml, "nvmlDeviceGetTemperature");
   p_power  = loadFn<PFN_power>(g_nvml, "nvmlDeviceGetPowerUsage");
   p_mem    = loadFn<PFN_mem>(g_nvml, "nvmlDeviceGetMemoryInfo");
+  p_clock  = loadFn<PFN_clock>(g_nvml, "nvmlDeviceGetClockInfo");
+  p_fan    = loadFn<PFN_fan>(g_nvml, "nvmlDeviceGetFanSpeed");
+  // Renamed to "ClocksEventReasons" in newer drivers; the old name is kept as an alias.
+  p_reasons = loadFn<PFN_reasons>(g_nvml, "nvmlDeviceGetCurrentClocksEventReasons", "nvmlDeviceGetCurrentClocksThrottleReasons");
   if (!p_init || !p_handle) return false;
   if (p_init() != 0) return false;
   g_ready = true;
@@ -137,6 +165,75 @@ static double pdhVramMB() {
   return (double)(total / 1048576LL);
 }
 
+// ── Per-process GPU (PDH) ───────────────────────────────────────────────────
+// Separate query from g_query: both hold rate counters, and collecting one query
+// twice in the same tick would make the second utilization delta meaningless.
+// NVML's per-process memory is not used because under WDDM (all GeForce cards
+// on Windows) it reports NVML_VALUE_NOT_AVAILABLE.
+static PDH_HQUERY   g_pq = NULL;
+static PDH_HCOUNTER g_pUtil = NULL;   // \GPU Engine(pid_*)\Utilization Percentage
+static PDH_HCOUNTER g_pMem = NULL;    // \GPU Process Memory(pid_*)\Dedicated Usage
+static bool g_pqReady = false, g_pqTried = false;
+
+static bool ensureProcPdh() {
+  if (g_pqReady) return true;
+  if (g_pqTried) return false;
+  g_pqTried = true;
+  if (PdhOpenQueryW(NULL, 0, &g_pq) != ERROR_SUCCESS) return false;
+  PdhAddEnglishCounterW(g_pq, L"\\GPU Engine(*)\\Utilization Percentage", 0, &g_pUtil);
+  PdhAddEnglishCounterW(g_pq, L"\\GPU Process Memory(*)\\Dedicated Usage", 0, &g_pMem);
+  if (!g_pUtil && !g_pMem) { PdhCloseQuery(g_pq); g_pq = NULL; return false; }
+  PdhCollectQueryData(g_pq); // prime the rate counter
+  g_pqReady = true;
+  return true;
+}
+
+// "pid_1234_luid_0x00000000_0x0000D1B2_phys_0[_eng_0_engtype_3D]"
+//   -> pid 1234, luid "0x00000000_0x0000D1B2", engtype "3D" (may be empty)
+static bool parseGpuInstance(const std::wstring& nm, DWORD* pid, std::wstring* luid, std::wstring* eng) {
+  if (nm.compare(0, 4, L"pid_") != 0) return false;
+  *pid = (DWORD)wcstoul(nm.c_str() + 4, NULL, 10);
+  size_t l = nm.find(L"luid_");
+  if (l == std::wstring::npos) return false;
+  size_t p = nm.find(L"_phys", l);
+  *luid = nm.substr(l + 5, (p == std::wstring::npos ? nm.size() : p) - (l + 5));
+  size_t e = nm.find(L"engtype_");
+  *eng = (e == std::wstring::npos) ? L"" : nm.substr(e + 8);
+  return true;
+}
+
+static bool getCounterArray(PDH_HCOUNTER c, DWORD fmt, std::vector<BYTE>& buf, DWORD* count) {
+  DWORD size = 0; *count = 0;
+  if (!c) return false;
+  if (PdhGetFormattedCounterArrayW(c, fmt, &size, count, NULL) != PDH_MORE_DATA || size == 0) return false;
+  buf.resize(size);
+  return PdhGetFormattedCounterArrayW(c, fmt, &size, count,
+    reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buf.data())) == ERROR_SUCCESS;
+}
+
+static std::string toUtf8(const std::wstring& w) {
+  if (w.empty()) return std::string();
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
+  std::string s(n, 0);
+  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, NULL, NULL);
+  return s;
+}
+
+// pid -> executable name for every running process. A Toolhelp snapshot needs no
+// access rights, unlike OpenProcess, so protected processes (dwm.exe, csrss.exe)
+// still get a name.
+static std::map<DWORD, std::string> processNames() {
+  std::map<DWORD, std::string> out;
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) return out;
+  PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
+  if (Process32FirstW(snap, &pe)) {
+    do { out[pe.th32ProcessID] = toUtf8(pe.szExeFile); } while (Process32NextW(snap, &pe));
+  }
+  CloseHandle(snap);
+  return out;
+}
+
 // ── AMD ADL (temperature / power via PMLog; dynamically loaded) ──────────────
 #define ADL_PMLOG_MAX_SENSORS 256
 struct ADLSingleSensorData { int supported; int value; };
@@ -203,6 +300,117 @@ Napi::Value ProcessCount(const Napi::CallbackInfo& info) {
   return Napi::Number::New(env, (int)(bytesReturned / sizeof(DWORD)));
 }
 
+// Total bytes received/sent on physical, connected adapters. JS turns two
+// samples into a rate. This replaces systeminformation's networkStats(), which
+// on Windows spawns PowerShell and took ~18s on its first call.
+Napi::Value NetBytes(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  PMIB_IF_TABLE2 table = NULL;
+  if (GetIfTable2(&table) != NO_ERROR || !table) return env.Null();
+  unsigned long long rx = 0, tx = 0;
+  for (ULONG i = 0; i < table->NumEntries; i++) {
+    const MIB_IF_ROW2& r = table->Table[i];
+    if (r.Type == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+    if (r.OperStatus != IfOperStatusUp) continue;
+    // Skip virtual/filter rows (Hyper-V, VPN shims, WFP/QoS filter layers) that
+    // mirror the same traffic and would double-count it.
+    if (!r.InterfaceAndOperStatusFlags.HardwareInterface) continue;
+    if (r.InterfaceAndOperStatusFlags.FilterInterface) continue;
+    rx += r.InOctets;
+    tx += r.OutOctets;
+  }
+  FreeMibTable(table);
+  Napi::Object o = Napi::Object::New(env);
+  o.Set("rx", Napi::Number::New(env, (double)rx));
+  o.Set("tx", Napi::Number::New(env, (double)tx));
+  return o;
+}
+
+// DXGI adapters with their LUID formatted the way PDH instance names spell it,
+// so per-process rows can be attributed to the right GPU on hybrid laptops.
+Napi::Value Adapters(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  IDXGIFactory1* factory = NULL;
+  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)) || !factory) return env.Null();
+  Napi::Array arr = Napi::Array::New(env);
+  unsigned int k = 0;
+  IDXGIAdapter1* ad = NULL;
+  for (UINT i = 0; factory->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND; i++) {
+    DXGI_ADAPTER_DESC1 d;
+    if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+      char luid[32];
+      snprintf(luid, sizeof(luid), "0x%08X_0x%08X", (unsigned)d.AdapterLuid.HighPart, (unsigned)d.AdapterLuid.LowPart);
+      Napi::Object o = Napi::Object::New(env);
+      o.Set("name", Napi::String::New(env, toUtf8(d.Description)));
+      o.Set("luid", Napi::String::New(env, luid));
+      o.Set("vram", Napi::Number::New(env, (double)(d.DedicatedVideoMemory / 1048576ULL)));
+      arr.Set(k++, o);
+    }
+    ad->Release();
+  }
+  factory->Release();
+  return arr;
+}
+
+// Per-process GPU usage across all adapters: dedicated VRAM (MB) and load (%,
+// busiest engine type, same rule as pdhUtil). The caller filters by luid.
+Napi::Value GpuProcesses(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (!ensureProcPdh()) return env.Null();
+  if (PdhCollectQueryData(g_pq) != ERROR_SUCCESS) return env.Null();
+
+  struct Row { DWORD pid = 0; std::wstring luid; double mem = 0; std::map<std::wstring, double> eng; };
+  std::map<std::wstring, Row> rows; // key: pid|luid
+  std::vector<BYTE> buf; DWORD count = 0;
+  DWORD pid; std::wstring luid, eng;
+
+  if (getCounterArray(g_pMem, PDH_FMT_LARGE, buf, &count)) {
+    PDH_FMT_COUNTERVALUE_ITEM_W* it = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buf.data());
+    for (DWORD i = 0; i < count; i++) {
+      LONG cs = it[i].FmtValue.CStatus;
+      if (cs != PDH_CSTATUS_VALID_DATA && cs != PDH_CSTATUS_NEW_DATA) continue;
+      if (!it[i].szName || !parseGpuInstance(it[i].szName, &pid, &luid, &eng)) continue;
+      Row& r = rows[std::to_wstring(pid) + L"|" + luid];
+      r.pid = pid; r.luid = luid;
+      r.mem += (double)it[i].FmtValue.largeValue / 1048576.0;
+    }
+  }
+  if (getCounterArray(g_pUtil, PDH_FMT_DOUBLE, buf, &count)) {
+    PDH_FMT_COUNTERVALUE_ITEM_W* it = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buf.data());
+    for (DWORD i = 0; i < count; i++) {
+      LONG cs = it[i].FmtValue.CStatus;
+      if (cs != PDH_CSTATUS_VALID_DATA && cs != PDH_CSTATUS_NEW_DATA) continue;
+      double v = it[i].FmtValue.doubleValue;
+      if (v <= 0) continue;
+      if (!it[i].szName || !parseGpuInstance(it[i].szName, &pid, &luid, &eng)) continue;
+      Row& r = rows[std::to_wstring(pid) + L"|" + luid];
+      r.pid = pid; r.luid = luid;
+      r.eng[eng] += v;
+    }
+  }
+
+  std::map<DWORD, std::string> names = processNames();
+  Napi::Array arr = Napi::Array::New(env);
+  unsigned int k = 0;
+  for (std::map<std::wstring, Row>::iterator it = rows.begin(); it != rows.end(); ++it) {
+    const Row& r = it->second;
+    double load = 0;
+    for (std::map<std::wstring, double>::const_iterator e = r.eng.begin(); e != r.eng.end(); ++e)
+      if (e->second > load) load = e->second;
+    if (load > 100) load = 100;
+    if (r.mem < 1 && load < 0.5) continue; // idle and holding no VRAM
+    Napi::Object o = Napi::Object::New(env);
+    o.Set("pid", Napi::Number::New(env, r.pid));
+    std::map<DWORD, std::string>::const_iterator nm = names.find(r.pid);
+    o.Set("name", Napi::String::New(env, nm != names.end() ? nm->second : std::string()));
+    o.Set("luid", Napi::String::New(env, toUtf8(r.luid)));
+    o.Set("mem", Napi::Number::New(env, r.mem));
+    o.Set("load", Napi::Number::New(env, load));
+    arr.Set(k++, o);
+  }
+  return arr;
+}
+
 Napi::Value GpuList(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (!ensureNvml() || !p_count) return env.Null();
@@ -238,6 +446,12 @@ Napi::Value Gpu(const Napi::CallbackInfo& info) {
       if (p_temp) { unsigned int t=0; if (p_temp(dev,0,&t)==0) o.Set("temp", Napi::Number::New(env,t)); }
       if (p_power){ unsigned int mw=0; if (p_power(dev,&mw)==0) o.Set("power", Napi::Number::New(env, mw/1000.0)); }
       if (p_mem)  { nvmlMemory_t m={0,0,0}; if (p_mem(dev,&m)==0){ o.Set("memUsed", Napi::Number::New(env,(double)(m.used/1048576ULL))); o.Set("memTotal", Napi::Number::New(env,(double)(m.total/1048576ULL))); } }
+      if (p_clock){ unsigned int c=0; if (p_clock(dev,NVML_CLOCK_GRAPHICS,&c)==0) o.Set("clockCore", Napi::Number::New(env,c));
+                    c=0; if (p_clock(dev,NVML_CLOCK_MEM,&c)==0) o.Set("clockMem", Napi::Number::New(env,c)); }
+      // Laptop GPUs usually have no driver-controlled fan -> NOT_SUPPORTED, key left unset.
+      if (p_fan)  { unsigned int f=0; if (p_fan(dev,&f)==0) o.Set("fan", Napi::Number::New(env,f)); }
+      // Raw clocks-event bitmask; decoded in JS (power cap / thermal / idle ...).
+      if (p_reasons){ unsigned long long r=0; if (p_reasons(dev,&r)==0) o.Set("throttle", Napi::Number::New(env,(double)r)); }
       return o;
     }
   }
@@ -287,6 +501,9 @@ Napi::Value GpuAmdDump(const Napi::CallbackInfo& info) {
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("hello", Napi::Function::New(env, Hello));
   exports.Set("processCount", Napi::Function::New(env, ProcessCount));
+  exports.Set("netBytes", Napi::Function::New(env, NetBytes));
+  exports.Set("adapters", Napi::Function::New(env, Adapters));
+  exports.Set("gpuProcesses", Napi::Function::New(env, GpuProcesses));
   exports.Set("gpuList", Napi::Function::New(env, GpuList));
   exports.Set("gpu", Napi::Function::New(env, Gpu));
   exports.Set("gpuAmdDump", Napi::Function::New(env, GpuAmdDump));

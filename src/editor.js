@@ -30,6 +30,7 @@ function getCardDefs() {
     'card-cpu': { label: t.cpu, icon: 'cpu', single: false },
     'card-ram': { label: t.ram, icon: 'memory-stick', single: false },
     'card-gpu': { label: t.gpu, icon: 'monitor-check', single: true },
+    'card-gpuproc': { label: t.gpuProcesses, icon: 'list-ordered', single: true },
     'card-proc': { label: t.processes, icon: 'layers', single: false },
     'card-screen': { label: t.screen, icon: 'monitor', single: false },
     'card-disk': { label: t.disk, icon: 'hard-drive', single: true },

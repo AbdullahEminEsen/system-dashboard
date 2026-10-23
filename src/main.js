@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, session, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, session, dialog, Notification } = require('electron')
 const si = require('systeminformation')
 const path = require('path')
 const Store = require('electron-store')
@@ -57,6 +57,20 @@ function readCpuLoad() {
   if (totalDiff <= 0) return null
   return Math.max(0, Math.min(100, Math.round(100 * (1 - idleDiff / totalDiff))))
 }
+// NVML clocks-event reasons bitmask -> the one reason worth showing. Bits that
+// aren't real slowdowns (app clocks, sync boost, display clock) are ignored.
+const THROTTLE_THERMAL = 0x20 | 0x40 // SW / HW thermal slowdown
+const THROTTLE_POWER = 0x04 | 0x80   // SW power cap / HW power brake
+const THROTTLE_HW = 0x08             // HW slowdown (thermal or power, driver doesn't say)
+function decodeThrottle(mask) {
+  if (mask == null) return null
+  if (mask & THROTTLE_THERMAL) return 'thermal'
+  if (mask & THROTTLE_POWER) return 'power'
+  if (mask & THROTTLE_HW) return 'other'
+  if (mask & 0x01) return 'idle'
+  return 'none'
+}
+
 function readMem() {
   const total = os.totalmem()
   const used = total - os.freemem()
@@ -67,6 +81,7 @@ const DEFAULT_LAYOUT = [
   { id: 'card-clock', type: 'single' },
   { id: 'group-1', type: 'group', children: ['card-cpu', 'card-ram'] },
   { id: 'card-gpu', type: 'single' },
+  { id: 'card-gpuproc', type: 'single' },
   { id: 'group-2', type: 'group', children: ['card-proc', 'card-screen'] },
   { id: 'card-disk', type: 'single' },
   { id: 'card-net', type: 'single' },
@@ -74,13 +89,13 @@ const DEFAULT_LAYOUT = [
 
 const DEFAULT_VISIBLE = [
   'card-clock', 'card-cpu', 'card-ram',
-  'card-gpu',
+  'card-gpu', 'card-gpuproc',
   'card-proc', 'card-screen', 'card-disk',
   'card-net'
 ]
 
 const VALID_CARDS = new Set([
-  'card-clock', 'card-cpu', 'card-ram', 'card-gpu',
+  'card-clock', 'card-cpu', 'card-ram', 'card-gpu', 'card-gpuproc',
   'card-proc', 'card-screen', 'card-disk', 'card-net'
 ])
 
@@ -91,6 +106,10 @@ let settingsWindow
 let benchmarkWindow = null
 
 app.isQuitting = false
+
+// Windows only shows toast notifications for apps with an AppUserModelID. The
+// installer registers one; setting it here makes `npm start` builds match.
+if (process.platform === 'win32') app.setAppUserModelId('com.systemdashboard.app')
 
 // On hybrid-graphics laptops (Intel iGPU + NVIDIA dGPU) Chromium runs WebGL on
 // the low-power integrated GPU by default — so the benchmark's GPU stress hit
@@ -146,6 +165,22 @@ function normalizeLayout(v) {
   return out
 }
 
+// Existing installs have a saved layout without the GPU-process card. Slot it in
+// under the GPU card once; if the user later hides it, that choice sticks.
+function addGpuProcCardOnce() {
+  if (store.get('gpuProcCardAdded')) return
+  store.set('gpuProcCardAdded', true)
+  const layout = store.get('layout', DEFAULT_LAYOUT)
+  const has = layout.some(s => s.id === 'card-gpuproc' || (s.children || []).includes('card-gpuproc'))
+  if (!has) {
+    const at = layout.findIndex(s => s.id === 'card-gpu' || (s.children || []).includes('card-gpu'))
+    layout.splice(at >= 0 ? at + 1 : layout.length, 0, { id: 'card-gpuproc', type: 'single' })
+    store.set('layout', layout)
+  }
+  const vis = store.get('visibleCards', DEFAULT_VISIBLE)
+  if (!vis.includes('card-gpuproc')) store.set('visibleCards', [...vis, 'card-gpuproc'])
+}
+
 // ── CSP (defense in depth alongside contextIsolation) ───────────
 function applyCSP() {
   // Only enforce CSP on remote (http/https) responses. file:// origin is opaque
@@ -166,6 +201,93 @@ function applyCSP() {
   })
 }
 
+// ── Per-process GPU usage & VRAM alert ─────────────────────────
+// The native add-on reports every process on every adapter, keyed by the
+// adapter's LUID. DXGI gives LUID <-> name, so we keep only the rows for the GPU
+// shown in the widget — on a hybrid laptop the browser on the Intel iGPU must
+// not be listed under the NVIDIA card.
+let allAdapters = []
+const GPU_PROC_ROWS = 5
+
+function selectedAdapterLuid(gpuName) {
+  if (!allAdapters.length) return null
+  const want = (gpuName || allGpus[selectedGpuIndex]?.name || '').toLowerCase()
+  const hit = want && allAdapters.find(a => a.name.toLowerCase() === want || a.name.toLowerCase().includes(want) || want.includes(a.name.toLowerCase()))
+  if (hit) return hit.luid
+  // No name to match (e.g. GPU still loading): assume the discrete card.
+  return allAdapters.reduce((a, b) => (b.vram > a.vram ? b : a)).luid
+}
+
+// Returns null when per-process data isn't available at all (no add-on / no
+// PDH counters) so the card can say so, vs. [] for "nothing is using the GPU".
+function readGpuProcesses(gpuName) {
+  if (!native || !native.gpuProcesses) return null
+  let rows
+  try { rows = native.gpuProcesses() } catch (e) { return null }
+  if (!Array.isArray(rows)) return null
+  const luid = selectedAdapterLuid(gpuName)
+  // Merge multi-process apps (browsers, Electron, DataLoader workers) by exe name.
+  const byName = new Map()
+  for (const r of rows) {
+    if (luid && r.luid !== luid) continue
+    const name = r.name || ('pid ' + r.pid)
+    const cur = byName.get(name) || { name, mem: 0, load: 0, count: 0 }
+    cur.mem += r.mem
+    cur.load += r.load
+    cur.count++
+    byName.set(name, cur)
+  }
+  return [...byName.values()]
+    .map(p => ({ name: p.name, mem: Math.round(p.mem), load: Math.min(100, Math.round(p.load)), count: p.count }))
+    .sort((a, b) => (b.mem - a.mem) || (b.load - a.load))
+    .slice(0, GPU_PROC_ROWS)
+}
+
+// Hysteresis so a value hovering around the line doesn't spam notifications:
+// fire at >= 90 %, re-arm only after dropping below 85 %.
+const VRAM_ALERT_ON = 90
+const VRAM_ALERT_OFF = 85
+let vramAlertActive = false
+
+function vramPercent(gpu) {
+  if (!gpu || gpu.vramUsed == null || !gpu.vram) return null
+  return Math.round((gpu.vramUsed / gpu.vram) * 100)
+}
+
+function checkVramAlert(gpu, procs) {
+  const pct = vramPercent(gpu)
+  if (pct === null) return false
+  if (!vramAlertActive && pct >= VRAM_ALERT_ON) {
+    vramAlertActive = true
+    console.log('[vram-alert] ' + pct + '% (' + gpu.vramUsed + ' / ' + gpu.vram + ' MB)')
+    if (Notification.isSupported()) {
+      const t = i18n[store.get('lang', 'tr')]
+      const top = (procs || readGpuProcesses(gpu.name) || [])[0]
+      new Notification({
+        title: t.vramAlertTitle,
+        body: t.vramAlertBody(pct, gpu.vramUsed, gpu.vram, top ? top.name + ' (' + top.mem + ' MB)' : null),
+        icon: path.join(__dirname, '../assets/icon.png')
+      }).show()
+    }
+  } else if (vramAlertActive && pct < VRAM_ALERT_OFF) {
+    vramAlertActive = false
+  }
+  return vramAlertActive
+}
+
+// While the widget sits hidden in the tray the full poll is skipped, but a long
+// training run is exactly when nobody is watching — so keep this one NVML read
+// (no spawned process) going to still warn before an out-of-memory crash.
+function hiddenVramWatch() {
+  if (!native || !native.gpu) return
+  try {
+    const g = native.gpu(selectedGpuIndex)
+    if (g && g.memUsed != null && g.memTotal) {
+      checkVramAlert({ name: g.name, vramUsed: Math.round(g.memUsed), vram: g.memTotal }, null)
+    }
+  } catch (e) { /* ignore */ }
+}
+
 // ── SystemPoller — central cache for periodic system data ──────
 class SystemPoller {
   constructor() {
@@ -184,7 +306,20 @@ class SystemPoller {
     this.lastTempFallbackAt = 0
     this.tempFallbackTries = 0       // consecutive empty WMI reads
     this.tempFallbackDisabled = false // give up after repeated failures (no sensor)
-    this.netInitialized = false
+    this.tempSiMisses = 0            // consecutive empty si.cpuTemperature() reads
+    this.lastNetSample = null        // { rx, tx, at } from the native counters
+    this.inFlight = new Set()        // slow background probes currently running
+    this.gpuProcs = []               // top GPU consumers on the selected adapter
+  }
+
+  // Run a slow probe without blocking the tick. The fast metrics (CPU, RAM, GPU)
+  // must never wait on systeminformation: on Windows it shells out to PowerShell,
+  // and e.g. the first networkStats() call measured ~18s, which left the whole
+  // widget blank for that long and stalled every update behind it.
+  background(key, fn) {
+    if (this.inFlight.has(key)) return
+    this.inFlight.add(key)
+    Promise.resolve().then(fn).catch(() => {}).finally(() => this.inFlight.delete(key))
   }
 
   invalidateGpu() {
@@ -193,16 +328,18 @@ class SystemPoller {
   }
 
   async refresh(now) {
-    if (!this.netInitialized) {
-      try {
-        await si.networkStats()
-        await new Promise(r => setTimeout(r, 1000))
-        this.net = await si.networkStats()
-        this.lastNet = now
-        this.netInitialized = true
-      } catch (e) { /* keep going */ }
+    // Network: native interface counters (instant) turned into a rate per tick.
+    const nb = native && native.netBytes ? (() => { try { return native.netBytes() } catch (e) { return null } })() : null
+    if (nb) {
+      const prev = this.lastNetSample
+      this.lastNetSample = { rx: nb.rx, tx: nb.tx, at: now }
+      if (prev && now > prev.at) {
+        const sec = (now - prev.at) / 1000
+        this.net = [{ rx_sec: Math.max(0, nb.rx - prev.rx) / sec, tx_sec: Math.max(0, nb.tx - prev.tx) / sec }]
+      }
     } else if (now - this.lastNet > 15000) {
-      try { this.net = await si.networkStats(); this.lastNet = now } catch (e) {}
+      this.lastNet = now
+      this.background('net', async () => { this.net = await si.networkStats() })
     }
 
     if (!this.disk || now - this.lastDisk > 60000) {
@@ -240,6 +377,9 @@ class SystemPoller {
             memLoad: g.memLoad != null ? Math.round(g.memLoad) : null,
             temp: g.temp ?? null,
             power: g.power ?? null,
+            clockCore: g.clockCore ?? null,
+            fan: g.fan ?? null,
+            throttle: decodeThrottle(g.throttle),
             vendor: g.name ? 'NVIDIA' : ''
           }
           this.lastGpu = now
@@ -248,7 +388,8 @@ class SystemPoller {
       } catch (e) { /* fall through to si */ }
     }
     if (!gpuHandled && (!this.gpu || now - this.lastGpu > 20000)) {
-      try {
+      this.lastGpu = now
+      this.background('gpu', async () => {
         const gpuData = await si.graphics()
         const controller = gpuData.controllers?.[selectedGpuIndex] || gpuData.controllers?.[0]
         this.gpu = {
@@ -260,18 +401,28 @@ class SystemPoller {
           memLoad: controller?.utilizationMemory ?? null,
           temp: controller?.temperatureGpu ?? null,
           power: controller?.powerDraw ?? null,
+          clockCore: controller?.clockCore ?? null,
+          fan: controller?.fanSpeed ?? null,
+          throttle: null,
           vendor: controller?.vendor ?? ''
         }
-      } catch (e) { this.gpu = null }
-      this.lastGpu = now
+      })
     }
 
-    if (now - this.lastTemp > 20000) {
-      try {
-        const t = await si.cpuTemperature()
-        this.cpuTemp = t.main ?? t.max ?? this.cpuTempFallback ?? null
-      } catch (e) { this.cpuTemp = this.cpuTempFallback ?? null }
+    this.gpuProcs = readGpuProcesses(this.gpu?.name)
+
+    // CPU temperature. Most Windows machines expose no sensor to user-mode code,
+    // so after 3 empty reads we stop asking systeminformation (each call spawns
+    // PowerShell, ~2.5s here) instead of paying that every 20s forever.
+    if (now - this.lastTemp > 20000 && this.tempSiMisses < 3) {
       this.lastTemp = now
+      this.background('temp', async () => {
+        const t = await si.cpuTemperature()
+        const v = t.main ?? t.max ?? null
+        if (v === null) this.tempSiMisses++
+        else this.tempSiMisses = 0
+        this.cpuTemp = v ?? this.cpuTempFallback ?? null
+      })
       // On Windows `systeminformation` frequently can't read CPU temperature.
       // When it comes back empty, refresh a WMI reading in the background — kept
       // non-blocking (no execSync on the main thread) and throttled to 60s. Each
@@ -431,7 +582,7 @@ function repositionChildWindows() {
     let offsetY = y
 
     const windows = []
-    if (settingsWindow && !settingsWindow.isDestroyed()) windows.push({ win: settingsWindow, w: 300, h: 420 })
+    if (settingsWindow && !settingsWindow.isDestroyed()) windows.push({ win: settingsWindow, w: 300, h: SETTINGS_HEIGHT })
     if (editorWindow && !editorWindow.isDestroyed()) windows.push({ win: editorWindow, w: 340, h: 680 })
     if (benchmarkWindow && !benchmarkWindow.isDestroyed()) windows.push({ win: benchmarkWindow, w: 420, h: 600 })
 
@@ -460,13 +611,15 @@ function createEditorWindow() {
   editorWindow.on('closed', () => { editorWindow = null; repositionChildWindows() })
 }
 
+const SETTINGS_HEIGHT = 480
+
 function createSettingsWindow() {
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.focus(); return }
   const { x, y } = mainWindow.getBounds()
   const [mainWidth] = mainWindow.getSize()
   const gap = 8
   settingsWindow = new BrowserWindow({
-    width: 300, height: 420,
+    width: 300, height: SETTINGS_HEIGHT,
     x: x + mainWidth + gap, y,
     resizable: false, frame: false, alwaysOnTop: true,
     webPreferences: commonWebPrefs()
@@ -475,7 +628,7 @@ function createSettingsWindow() {
   settingsWindow.loadFile(path.join(__dirname, 'settings.html'))
   settingsWindow.on('closed', () => { settingsWindow = null; repositionChildWindows() })
   if (editorWindow && !editorWindow.isDestroyed()) {
-    editorWindow.setPosition(x + mainWidth + gap, y + 420 + gap)
+    editorWindow.setPosition(x + mainWidth + gap, y + SETTINGS_HEIGHT + gap)
   }
 }
 
@@ -508,7 +661,12 @@ app.whenReady().then(async () => {
     store.set('layout', repaired.length ? repaired : DEFAULT_LAYOUT)
     const vis = store.get('visibleCards', DEFAULT_VISIBLE)
     if (Array.isArray(vis)) store.set('visibleCards', vis.filter(c => VALID_CARDS.has(c)))
+    addGpuProcCardOnce()
   } catch (e) { /* keep going with defaults */ }
+
+  if (native && native.adapters) {
+    try { allAdapters = native.adapters() || [] } catch (e) { allAdapters = [] }
+  }
 
   try {
     const displays = screen.getAllDisplays()
@@ -558,7 +716,12 @@ app.on('window-all-closed', (e) => {
 })
 
 // ── Push modeli ─────────────────────────────────────────────────
-const PUSH_INTERVAL = 5000
+// Refresh rate is user-selectable. Every per-tick source (os CPU/RAM, NVML GPU,
+// EnumProcesses) is effectively free, so 1s is fine for watching a game; the
+// expensive probes (network, temperature, disk) keep their own throttles.
+const REFRESH_OPTIONS = [1000, 2000, 5000]
+let pushInterval = REFRESH_OPTIONS.includes(store.get('refreshMs')) ? store.get('refreshMs') : 2000
+let pushTimer = null
 let isPushing = false
 
 // Self-scheduling loop instead of setInterval: the next tick is scheduled only
@@ -568,7 +731,7 @@ let isPushing = false
 // the CPU and froze the UI — which is why the close buttons stopped responding.
 async function pushLoop() {
   try { await pushSystemData() } catch (e) { /* never let the loop die */ }
-  setTimeout(pushLoop, PUSH_INTERVAL)
+  pushTimer = setTimeout(pushLoop, pushInterval)
 }
 
 async function pushSystemData() {
@@ -578,7 +741,7 @@ async function pushSystemData() {
   // the systeminformation calls entirely. On Windows several of them spawn
   // external processes (wmic / tasklist / powershell); doing that every 4s for a
   // widget nobody is looking at was the main source of idle CPU load.
-  if (!mainWindow.isVisible()) return
+  if (!mainWindow.isVisible()) { hiddenVramWatch(); return }
   isPushing = true
   try {
     const now = Date.now()
@@ -613,7 +776,8 @@ async function pushSystemData() {
       display: cachedDisplay,
       processes: { all: poller.processCount },
       uptime: i18n[lang].uptime(h, m),
-      gpu: poller.gpu
+      gpu: poller.gpu ? { ...poller.gpu, vramAlert: checkVramAlert(poller.gpu, poller.gpuProcs) } : null,
+      gpuProcs: poller.gpuProcs
     })
   } catch (e) { /* swallow */ } finally {
     isPushing = false
@@ -687,6 +851,16 @@ ipcMain.on('set-opacity', (_, val) => {
   if (mainWindow) { try { mainWindow.setOpacity(val) } catch (e) { } }
 })
 
+ipcMain.handle('get-refresh-rate', () => pushInterval)
+ipcMain.on('set-refresh-rate', (_, ms) => {
+  if (!REFRESH_OPTIONS.includes(ms)) { console.warn('[ipc] reject set-refresh-rate'); return }
+  pushInterval = ms
+  store.set('refreshMs', ms)
+  // Restart the loop so the new rate applies now instead of after the old delay.
+  clearTimeout(pushTimer)
+  pushTimer = setTimeout(pushLoop, 0)
+})
+
 ipcMain.handle('get-gpu-highperf', () => store.get('gpuHighPerf', true))
 ipcMain.on('set-gpu-highperf', (_, val) => {
   if (!isBool(val)) { console.warn('[ipc] reject set-gpu-highperf'); return }
@@ -740,14 +914,13 @@ ipcMain.handle('get-benchmark-sample', async () => {
   try {
     // CPU load + temperature. si.currentLoad() keeps its own sampling state, so
     // it stays accurate independent of the widget's readCpuLoad(). Temperature
-    // uses the non-blocking cached WMI fallback — NOT the synchronous execSync
-    // one, which would freeze the main process on every benchmark sample.
-    let cpuLoad = null, cpuTempVal = poller.cpuTempFallback ?? null
+    // comes from the poller's cache: si.cpuTemperature() spawns PowerShell on
+    // Windows (~2.5s), longer than the sample interval itself.
+    let cpuLoad = null
+    const cpuTempVal = poller.cpuTemp ?? poller.cpuTempFallback ?? null
     try {
-      const [cl, ct] = await Promise.all([si.currentLoad(), si.cpuTemperature()])
-      cpuLoad = Math.round(cl.currentLoad)
-      cpuTempVal = ct.main ?? ct.max ?? poller.cpuTempFallback ?? null
-    } catch (e) { /* keep fallbacks */ }
+      cpuLoad = Math.round((await si.currentLoad()).currentLoad)
+    } catch (e) { /* leave null */ }
 
     // GPU — native NVML first (real load/temp/power/VRAM, no nvidia-smi spawn),
     // which matters most during a stress test. Fall back to systeminformation.
@@ -758,7 +931,8 @@ ipcMain.handle('get-benchmark-sample', async () => {
         if (g) gpu = {
           load: g.load ?? null, temp: g.temp ?? null,
           vramUsed: g.memUsed ?? null, vramTotal: g.memTotal ?? null,
-          power: g.power ?? null, memLoad: g.memLoad ?? null
+          power: g.power ?? null, memLoad: g.memLoad ?? null,
+          clockCore: g.clockCore ?? null, throttle: decodeThrottle(g.throttle)
         }
       } catch (e) { /* fall through */ }
     }

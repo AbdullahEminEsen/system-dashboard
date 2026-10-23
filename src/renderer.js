@@ -26,6 +26,7 @@
     'card-cpu': 90,
     'card-ram': 100,
     'card-gpu': 200,
+    'card-gpuproc': 150,
     'card-proc': 85,
     'card-screen': 80,
     'card-disk': 100,
@@ -156,10 +157,24 @@
           <div style="font-size:20px;font-weight:600;color:#34d399" id="gpuPower">—<span class="unit">W</span></div>
         </div>
       </div>
-      <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
-        <div style="font-size:11px;color:var(--text-muted)">${t.vramUsed}</div>
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">
+        <div>${t.coreClock} <span id="gpuClock" style="color:var(--text-primary);font-weight:500">—</span></div>
+        <div id="gpuFanWrap" style="display:none">${t.fan} <span id="gpuFan" style="color:var(--text-primary);font-weight:500">—</span></div>
+        <div>${t.throttle} <span id="gpuThrottle" style="color:var(--text-primary);font-weight:500">—</span></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px">
+        <div style="font-size:11px;color:var(--text-muted)">${t.vramUsed} <span id="gpuVramWarn" style="display:none;color:#f87171;font-weight:600">· ${t.vramHigh}</span></div>
         <div style="font-size:11px;font-weight:500" id="gpuVramUsed">— / — MB</div>
       </div>
+    </div>`,
+
+    'card-gpuproc': () => `
+    <div class="card" id="card-gpuproc">
+      <div class="card-header">
+        <i data-lucide="list-ordered" style="width:13px;height:13px;color:var(--text-muted)"></i>
+        <span class="label">${t.gpuProcesses}</span>
+      </div>
+      <div class="gpuproc-list" id="gpuProcList"><div class="gpuproc-empty">—</div></div>
     </div>`,
 
     'card-proc': () => `
@@ -283,6 +298,36 @@
   let pendingPayload = null
   let rafScheduled = false
 
+  const THROTTLE_LABEL = {
+    none: () => t.throttleNone, idle: () => t.throttleIdle,
+    power: () => t.throttlePower, thermal: () => t.throttleThermal, other: () => t.throttleOther
+  }
+  const THROTTLE_COLOR = { power: '#facc15', thermal: '#f87171', other: '#fb923c' }
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+  // Fixed number of row slots: the window height is measured once per layout
+  // render, so the card must not grow or shrink as processes come and go.
+  function renderGpuProcs(procs, gpu) {
+    const list = elById('gpuProcList')
+    if (!list) return
+    if (!Array.isArray(procs) || procs.length === 0) {
+      list.innerHTML = `<div class="gpuproc-empty">${procs ? t.gpuProcEmpty : t.gpuProcUnavailable}</div>`
+      return
+    }
+    const total = gpu && gpu.vram ? gpu.vram : null
+    list.innerHTML = procs.map(p => {
+      const share = total ? Math.min(100, Math.round((p.mem / total) * 100)) : 0
+      const label = escapeHtml(p.name.replace(/\.exe$/i, '')) + (p.count > 1 ? ` <span class="gpuproc-count">×${p.count}</span>` : '')
+      return `<div class="gpuproc-row">
+        <div class="gpuproc-name" title="${escapeHtml(p.name)}">${label}</div>
+        <div class="gpuproc-mem">${p.mem} MB</div>
+        <div class="gpuproc-load">${p.load}%</div>
+        <div class="gpuproc-bar"><div style="width:${share}%"></div></div>
+      </div>`
+    }).join('')
+  }
+
   function applySystemUpdate(d, prev) {
     // CPU
     if (d.cpu !== prev.cpu) {
@@ -330,10 +375,32 @@
       if (!pg || d.gpu.power !== pg.power) {
         setHTML('gpuPower', d.gpu.power !== null ? `${d.gpu.power.toFixed(1)}<span class="unit">W</span>` : `—<span class="unit">W</span>`)
       }
+      if (!pg || d.gpu.clockCore !== pg.clockCore) {
+        setText('gpuClock', d.gpu.clockCore != null ? `${d.gpu.clockCore} MHz` : '—')
+      }
+      if (!pg || d.gpu.fan !== pg.fan) {
+        // Most laptop GPUs expose no fan reading — hide the slot instead of "—".
+        setStyle('gpuFanWrap', 'display', d.gpu.fan != null ? 'block' : 'none')
+        if (d.gpu.fan != null) setText('gpuFan', `${d.gpu.fan}%`)
+      }
+      if (!pg || d.gpu.throttle !== pg.throttle) {
+        const el = elById('gpuThrottle')
+        if (el) {
+          el.textContent = THROTTLE_LABEL[d.gpu.throttle]?.() ?? '—'
+          el.style.color = THROTTLE_COLOR[d.gpu.throttle] || 'var(--text-primary)'
+        }
+      }
+      if (!pg || d.gpu.vramAlert !== pg.vramAlert) {
+        setStyle('gpuVramWarn', 'display', d.gpu.vramAlert ? 'inline' : 'none')
+        setStyle('gpuVramUsed', 'color', d.gpu.vramAlert ? '#f87171' : '')
+      }
       if (!pg || d.gpu.vramUsed !== pg.vramUsed || d.gpu.vram !== pg.vram) {
         setText('gpuVramUsed', (d.gpu.vramUsed !== null && d.gpu.vram !== null) ? `${d.gpu.vramUsed} / ${d.gpu.vram} MB` : '— / — MB')
       }
     }
+
+    // GPU processes
+    if (JSON.stringify(d.gpuProcs) !== JSON.stringify(prev.gpuProcs)) renderGpuProcs(d.gpuProcs, d.gpu)
 
     // Processes
     const pp = prev.processes || {}

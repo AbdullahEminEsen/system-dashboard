@@ -24,7 +24,5 @@ npm-debug.log*
 .vscode/
 .idea/
 
-assets/
-src/
 
 native/build/
